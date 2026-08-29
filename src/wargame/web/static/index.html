@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandtable · 指挥协同推演</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">◈</span>Sandtable<span class="sub">指挥协同推演系统</span></div>
+  <div class="clock"><span class="pulse" id="run-pulse"></span><span class="t-label">T</span><span id="tick">000</span><span class="scenario" id="scenario"></span></div>
+  <div class="controls">
+    <button id="btn-start" class="btn primary">▶ 开始</button>
+    <button id="btn-pause" class="btn">⏸ 暂停</button>
+    <button id="btn-step" class="btn">⏭ 单步</button>
+    <button id="btn-reset" class="btn">⟲ 重置</button>
+    <select id="speed" class="btn select" title="推演速度">
+      <option value="1">×1</option>
+      <option value="2" selected>×2</option>
+      <option value="4">×4</option>
+      <option value="8">×8</option>
+    </select>
+  </div>
+  <div class="spacer"></div>
+  <div class="mode">
+    <span id="mode-badge" class="badge">—</span>
+    <button id="btn-home" class="btn">☰ 主界面</button>
+    <button id="btn-settings" class="btn">⚙ 设置</button>
+  </div>
+</header>
+
+<main>
+  <aside class="panel left">
+    <div class="tabs" id="tabs"></div>
+    <div id="org-wrap" class="org-wrap">
+      <svg id="org-edges" width="100%" height="100%"></svg>
+      <div id="org-nodes"></div>
+    </div>
+    <div class="intent-box">
+      <div class="panel-title">注入上级意图 <span class="hint" id="intent-target">→ 红军军长</span></div>
+      <textarea id="intent-text" rows="3"
+        placeholder="例：集中主力从北桥渡河，夺占河东城镇，得手后向北发展进攻"></textarea>
+      <button id="btn-intent" class="btn primary full">下达意图</button>
+    </div>
+  </aside>
+
+  <section class="panel center">
+    <div class="center-head">
+      <div class="panel-title">态势图</div>
+      <div class="view-switch" id="view-switch"></div>
+    </div>
+    <div class="map-wrap">
+      <canvas id="map"></canvas>
+      <div class="map-ctrl">
+        <button id="zoom-in" class="btn icon" title="放大">＋</button>
+        <button id="zoom-out" class="btn icon" title="缩小">－</button>
+        <button id="zoom-reset" class="btn icon" title="复位视图">⌂</button>
+        <span id="zoom-label" class="zoom-label">100%</span>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:#e5484d"></i>红军</span>
+      <span><i class="sw" style="background:#4c8dff"></i>蓝军</span>
+      <span><i class="sw ghost"></i>敌情轮廓（延迟/误差）</span>
+      <span class="dim">步 步兵 · 装 装甲 · 炮 炮兵 · 侦 侦察 · ▬ 兵力条</span>
+    </div>
+  </section>
+
+  <aside class="panel right">
+    <div class="center-head">
+      <div class="rtabs">
+        <button class="rtab active" data-rtab="feed">消息流</button>
+        <button class="rtab" data-rtab="metrics">复盘指标</button>
+      </div>
+      <select id="feed-filter" class="btn select">
+        <option value="">全部类型</option>
+        <option value="intent">意图</option>
+        <option value="order">命令</option>
+        <option value="ack">确认</option>
+        <option value="sitrep">报告</option>
+        <option value="request">请示</option>
+        <option value="plan">方案</option>
+        <option value="intel">情报</option>
+        <option value="escalation">告警</option>
+      </select>
+    </div>
+    <div id="feed" class="feed"></div>
+    <div id="metrics" class="metrics hidden"></div>
+  </aside>
+</main>
+
+<!-- 主界面大厅 -->
+<div id="lobby" class="mask">
+  <div class="lobby">
+    <div class="modal-head">
+      <span class="panel-title">CommandSim · 推演大厅</span>
+      <span class="set-note">选择战役进入推演，或把资料交给 AI 生成新场景</span>
+    </div>
+    <div id="lobby-cards" class="lobby-cards"></div>
+    <div class="set-group">
+      <div class="set-title">AI 场景导入（把战役资料粘进来，LLM 自动分类阵营/兵力/目标）</div>
+      <textarea id="ai-text" rows="5"
+        placeholder="例：1944年6月6日，盟军在诺曼底登陆……德军第7集团军依托大西洋壁垒防御，第21装甲师驻卡昂……"></textarea>
+      <button id="btn-ai-import" class="btn primary full">交给 AI 识别并生成场景</button>
+      <div class="set-note" id="ai-status">需要已在设置中配置 LLM。生成后自动加入上方场景列表。</div>
+    </div>
+  </div>
+</div>
+
+<!-- 设置面板 -->
+<div id="settings-mask" class="mask hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="panel-title">推演设置</span>
+      <button id="btn-close-settings" class="btn icon">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="set-group">
+        <div class="set-title">运行（保存后重置推演生效）</div>
+        <label>推演场景 <select id="set-scenario"></select></label>
+        <label>决策引擎
+          <select id="set-policy">
+            <option value="auto">自动（配置 Key 则用 LLM）</option>
+            <option value="rule">规则策略（离线确定性）</option>
+            <option value="llm">LLM 策略</option>
+          </select>
+        </label>
+        <label>随机种子 <input id="set-seed" type="number" step="1" /></label>
+        <label>推演速度 ×<span id="set-speed-v">2</span>
+          <input id="set-speed" type="range" min="0.5" max="8" step="0.5" /></label>
+      </div>
+      <div class="set-group">
+        <div class="set-title">战斗参数（实时）</div>
+        <div class="set-grid" id="set-battle"></div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">后勤与侦察（实时）</div>
+        <div class="set-grid" id="set-logi"></div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">机动与节奏（实时）</div>
+        <div class="set-grid" id="set-tempo"></div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">组织摩擦（实时）</div>
+        <div class="set-grid" id="set-friction"></div>
+        <div class="set-note">模拟通信摩擦：命令迟到、报告丢失，上级基于不完整的信息决策——这正是要观察的组织现象。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">LLM 运行参数（实时）</div>
+        <div class="set-grid" id="set-llmrun"></div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">LLM 决策引擎</div>
+        <label>Base URL <input id="set-llm-url" type="text" placeholder="https://api.openai.com/v1" /></label>
+        <label>模型 <input id="set-llm-model" type="text" placeholder="gpt-4o-mini" /></label>
+        <label>API Key <input id="set-llm-key" type="password" placeholder="留空保持不变" /></label>
+        <div class="set-note">兼容 OpenAI / DeepSeek / 通义 / Ollama 等任何 OpenAI 兼容端点。Key 只写入不回显。</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="set-note" id="set-status"></span>
+      <button id="btn-apply-friction" class="btn">应用实时参数</button>
+      <button id="btn-save-settings" class="btn primary">保存并重置推演</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

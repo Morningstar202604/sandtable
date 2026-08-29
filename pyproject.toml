@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sandtable"
+version = "0.1.0"
+description = "Sandtable 作战沙盘：多方隔离的多智能体军队指挥链推演系统（任务式指挥/命令下行/反馈上行/AI 场景导入）"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Sandtable Contributors"}]
+keywords = ["wargame", "multi-agent", "llm", "simulation", "command-and-control", "normandy"]
+dependencies = [
+    "pydantic>=2.5",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["wargame*"]
+
+[tool.setuptools.package-data]
+wargame = ["web/static/*", "web/static/css/*", "web/static/js/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
