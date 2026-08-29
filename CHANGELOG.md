@@ -1,25 +1,40 @@
-# 更新日志（Changelog）
+# Changelog
 
-本项目的全部重要变更记录在此文件中。
-格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
-版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+All notable changes to this project are documented here.
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
 ## [0.1.0] - 2026-08-29
 
-首个开源版本。
+Initial open-source release.
 
 ### Added
-- 多方阵营架构（任意数量阵营 + 交战关系 WAR_PAIRS，同盟接壤不交战）
-- 确定性世界引擎：机动/近战/炮兵/补给/侦察/天气脚本/空军遮断/
-  补给站争夺/战役目标计分/增援批次
-- 职位即智能体：信箱 + 任务队列 + 记忆，可插拔策略（规则脑 / LLM 脑）
-- 阵营消息总线：延迟投递、隔离硬校验、组织摩擦（延迟倍率/丢失率）
-- LLM 决策链路：多厂商 OpenAI 兼容端点、/no_think、JSON 稳健提取、
-  解析失败重试与规则降级、每拍调用预算
-- Web 指挥中心：推演大厅、指挥链路图消息动画、态势图（导演/阵营视角、
-  缩放平移）、消息流、复盘指标、实时调参设置面板、AI 场景导入
-- 场景：渡河攻坚（训练）、诺曼底登陆 1944（三方历史场景）
-- 事件全量 JSONL 落盘（runs/），可离线复盘分析
-- 测试 8 项：指挥链贯通/隔离硬拦截/可复现性/情报纯净/多方场景/动态场景/指标
+- **Multi-faction architecture** — any number of factions with explicit war
+  relations (`WAR_PAIRS`); allied factions stand adjacent without firing.
+- **Deterministic world engine** — movement, melee attrition, artillery,
+  supply, reconnaissance with fog-of-war, scripted weather, air interdiction,
+  capturable supply depots, scored objectives, timed reinforcement waves.
+- **Position = agent** — mailbox + task queue + private memory per position;
+  pluggable policies (rule brain / LLM brain with JSON schema + fallback).
+- **Hard isolation** — per-faction message bus and intel store;
+  cross-faction messages rejected at the bus layer, with live metrics.
+- **Organizational friction knobs** — message latency multiplier and loss
+  rate, live-tunable during a run.
+- **Character & config per position** — command style / historical personality
+  injected into LLM role cards, per-position behavior overrides
+  (e.g. withdrawal thresholds).
+- **Web command center** — scenario lobby, animated command-chain graph,
+  map with zoom/pan, director/agent perspectives, live message feed,
+  after-action metrics panel, settings with 20+ live parameters,
+  AI scenario import.
+- **AI scenario import** — paste battle material, an LLM extracts factions,
+  units, objectives and intents into a playable dynamic scenario.
+- **Scenarios**: River Crossing (fictional training), Normandy 1944
+  (US / UK-Canada / Germany three-faction historical).
+- **Events as source of truth** — every tick's events persisted to
+  `runs/<timestamp>/events.jsonl` for replay and offline analysis.
+- **Test suite** (8 tests): command-chain flow, combat/intel occurrence,
+  isolation enforcement, seed determinism, intel purity, multi-faction
+  Normandy, dynamic scenario builder, metrics.

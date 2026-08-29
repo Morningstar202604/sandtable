@@ -1,127 +1,145 @@
-# Sandtable · 指挥协同推演系统
+# Sandtable
 
-<p>
-  <a href="#快速开始">安装</a> ·
-  <a href="#主界面与多方阵营">场景</a> ·
-  <a href="#复盘指标右栏复盘指标页签">复盘</a> ·
-  <a href="#contributing">贡献</a> ·
-  <a href="#license">License</a>
+<p align="center">
+  <strong>Multi-agent wargame for studying how military organizations command, coordinate and report — not just how units fight.</strong>
 </p>
 
-**Sandtable（作战沙盘）** 是一个双阵营/多方完全隔离的多智能体军队指挥链模拟系统。
-它模拟的主角不是战场画面，而是**军队这台组织机器本身**：上级意图如何被层层分解为命令、
-下级如何自主执行并反馈、横向如何协同、信息在延迟与失真中如何流动。
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ja-JP.md">日本語</a>
+</p>
+
+<p align="center">
+  <a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-passing-brightgreen"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-yellow">
+  <img alt="LLM" src="https://img.shields.io/badge/LLM-optional%20(rule%20mode%20works%20offline)-orange">
+</p>
+
+## Why Sandtable
+
+Most wargame projects simulate the battlefield. Sandtable simulates the **command
+machine behind it**: how an intent from high command is decomposed layer by layer
+into orders, how subordinates execute and report back, how peers coordinate, and
+how information decays under latency and loss. The map is a backdrop; the
+organization is the simulation.
 
 ```
-意图(上级) → 方案(参谋) → 命令(军→师→团) → 行动(世界引擎) → 报告/告警(上行)
-     ▲                                                          │
-     └────────────── 延迟 · 丢失 · 失真（组织摩擦）──────────────┘
+Intent (HQ) → Plan (staff) → Orders (army→division→regiment) → Actions (engine) → Reports (upward)
+     ▲                                                                                │
+     └─────────────── latency · loss · distortion (organizational friction) ─────────┘
 ```
 
-- 多方阵营 + 交战关系（同盟接壤不交战），参考钢铁雄心式的多国格局
-- 确定性世界引擎（固定种子可复现），LLM 只做"决策"不做物理引擎
-- 每个职位一个独立智能体：信箱 + 任务队列 + 记忆 + 可插拔策略（规则 / LLM）
-- 隔离是硬约束：阵营间没有共享对象，跨阵营消息在总线层直接拒绝
-- Web 指挥中心：指挥链路图动画 / 态势图 / 消息流 / 复盘指标 / 实时调参 / AI 场景导入
+## Highlights
 
-## 核心设计
+- **Multi-faction by design** — any number of factions with explicit *war
+  relations* (`WAR_PAIRS`): allied factions can stand adjacent without firing at
+  each other. The bundled Normandy scenario runs three factions (US / UK-Canada /
+  Germany), each with its own command chain, intelligence and score.
+- **Deterministic engine, LLM only decides** — movement, attrition, supply,
+  reconnaissance, weather, air interdiction, depot capture and objectives are all
+  resolved by a seeded, reproducible engine. LLMs (or a rule fallback) only emit
+  typed messages and orders; hallucinated orders are rejected by schema checks.
+- **Isolation is enforced, not promised** — each faction has its own message bus,
+  intel store and memory. Cross-faction messages raise at the bus layer. Even
+  inside one faction, agents share nothing: a corps commander knows exactly what
+  his subordinates reported, nothing more.
+- **Agents with character** — every position carries a scenario-defined personality
+  ("Montgomery-style caution", "fanatic 12th SS", "delayed German high command that
+  hoards its panzer reserve"), injected into LLM role cards, with per-position
+  behavior overrides (e.g. alert thresholds).
+- **Organizational friction as a knob** — message latency and loss rates are live
+  parameters: watch commanders decide on late, incomplete information.
+- **After-action metrics** — order volume, acknowledgement rate and delay, report
+  counts, decision counts, message losses, objective scores, per faction, live.
+- **AI scenario import** — paste any battle material (history article, OOB notes,
+  news); an LLM classifies it into factions, units, objectives and intents, and the
+  scenario becomes playable from the lobby.
 
-- **LLM 不做物理引擎**。机动/交战/补给/侦察/天气/空军遮断全部由确定性规则引擎结算；
-  LLM（或规则策略）只产出类型化的消息与命令，幻觉命令在 schema 校验处被拦截。
-- **隔离是结构约束，不是约定**。每个阵营一条独立消息总线、独立情报库；
-  阵营内智能体之间也不共享内存——军长知道的，仅仅是报告送达的那些。
-- **权限在代码层校验**。职位声明可指挥的部队；越权指挥在提交处被拦截并产生事件。
-- **任务式指挥（Auftragstaktik）**。上级命令带任务与后续目标，下级夺占后自主推进。
-
-## 快速开始
+## Quick start
 
 ```bash
-pip install -e .            # 依赖：pydantic / fastapi / uvicorn / httpx
-python -m wargame.cli serve # 打开 http://127.0.0.1:8300，在主界面选择场景
+pip install -e .            # deps: pydantic / fastapi / uvicorn / httpx
+python -m wargame.cli serve # open http://127.0.0.1:8300, pick a scenario in the lobby
 ```
 
-无 LLM Key 时自动使用**规则策略**（离线、确定性、可复现），完整跑通
-"意图→方案→命令→交战→反馈"全链路。
+Without an LLM key the system automatically runs the **rule policy** — offline,
+deterministic, reproducible — while the full `intent → plan → order → combat →
+report` loop still executes.
 
-配置 LLM 决策（兼容一切 OpenAI 兼容端点，可在网页设置面板里填）：
+LLM decision mode (any OpenAI-compatible endpoint; set it in the web settings panel):
 
 ```ini
-LLM_API_KEY=sk-...                        # 永远不要提交到仓库
-LLM_BASE_URL=https://api.openai.com/v1    # 或 DeepSeek/通义/Ollama 等
+LLM_API_KEY=sk-...                        # never commit this
+LLM_BASE_URL=https://api.openai.com/v1    # or DeepSeek / Qwen / Ollama ...
 LLM_MODEL=gpt-4o-mini
 ```
 
-命令行模式：
+Headless mode:
 
 ```bash
-python -m wargame.cli run --scenario normandy --ticks 40   # headless 跑诺曼底
-python -m wargame.cli serve --scenario cross_river         # 指定场景启动 Web
+python -m wargame.cli run --scenario normandy --ticks 40
+python -m wargame.cli serve --scenario cross_river
 ```
 
-## 主界面与多方阵营
+## Scenarios
 
-- **推演大厅**：打开页面先选择战役卡片进入推演（☰ 主界面随时返回）；
-- **AI 场景导入**：把战役资料粘贴进大厅输入框，LLM 自动完成分类与意图识别——
-  提取阵营、部队、目标、各方意图与统帅性格，生成可推演的动态场景；
-- **多方阵营**：阵营数量不限。引擎层有"交战关系"（WAR_PAIRS）：未声明时所有
-  异阵营互为敌对；声明后接壤的同盟不交火。诺曼底场景即为三方
-  （美军 / 英加军 / 德军），每方独立指挥链、独立情报、独立计分。
-
-## 场景
-
-| 场景 | 说明 |
+| Scenario | Description |
 |---|---|
-| 渡河攻坚（cross_river） | 虚构训练场景：两座桥是瓶颈，组织摩擦集中体现 |
-| 诺曼底登陆 1944（normandy） | 三方历史场景：五滩上陆 vs 大西洋壁垒+装甲预备队 |
+| River Crossing (`cross_river`) | Fictional training scenario: two bridges as bottlenecks, organizational friction in full view |
+| Normandy 1944 (`normandy`) | Three-faction historical scenario: five-beach landing vs the Atlantic Wall and the panzer reserve |
 
-场景是纯数据模块（`src/wargame/scenarios/`），导出统一接口即可新增：
-`SCENARIO_NAME` / `build_world()` / `FACTIONS` / `WAR_PAIRS` / `DEFAULT_INTENTS` /
-`PLANS`（参谋方案选项）/ `RECON_TARGET`，可选 `CAMP_NAMES`、`ORG_TITLES`、
-`ORG_CONFIG`（职位级指挥风格与行为参数）、`WEATHER`、`AIR_POWER`、
-`OBJECTIVES`、`REINFORCEMENTS`（增援批次）。写好后到 `scenarios/__init__.py`
-注册一行，主界面立即可选。
+Scenarios are plain data modules under `src/wargame/scenarios/`. Export the
+unified interface (`SCENARIO_NAME`, `build_world()`, `FACTIONS`, `WAR_PAIRS`,
+`DEFAULT_INTENTS`, `PLANS`, `RECON_TARGET`, optional `CAMP_NAMES`, `ORG_TITLES`,
+`ORG_CONFIG`, `WEATHER`, `AIR_POWER`, `OBJECTIVES`, `REINFORCEMENTS`), register one
+line in `scenarios/__init__.py`, and it appears in the lobby.
 
-## 战役级机制（诺曼底场景实测）
+## Campaign mechanics (as exercised by the Normandy scenario)
 
-- **大地图**：44×30，滚轮缩放 / 拖拽平移；
-- **地形体系**：平原 / 树篱(bocage) / 丘陵 / 河流桥梁 / 沼泽（迟滞装甲）/ 铁路公路（机动走廊）；
-- **天气与空军遮断**：天气按脚本演变（D-Day 风暴→阴→晴），空军按天气与双方
-  空中力量对比打击敌行军纵队；
-- **增援批次**：按时刻表入场并编入指定指挥官；
-- **补给站争夺**：可被敌军夺占反哺对方——后勤线是战役的动脉；
-- **战役目标体系**：城市目标带分值，控制权实时计入复盘得分。
+- **Large map** 44×30 with zoom/pan; terrain: plain, bocage forest, hills, rivers &
+  bridges, marsh (slows armor), rail/road corridors (movement highways).
+- **Weather & air interdiction** — scripted weather (the June 6 storm grounds the
+  air forces, as it did historically); air power strafes enemy units that moved.
+- **Reinforcement schedule** — units arrive on time and attach to a named commander
+  (101st Airborne, British 51st Highland, 12th SS, Panzer Lehr).
+- **Supply depot capture** — depots can flip to the enemy and feed *them*.
+- **Objectives & scoring** — cities carry victory values; control is scored live.
 
-## 设置面板（网页右上 ⚙）
+## Settings panel (⚙ in the web UI)
 
-实时可调：战斗强度 / 炮兵威力 / 工事加成 / 地形加成 / 补给速率与半径 /
-侦察倍率 / 敌情误差 / 移速倍率 / 报告节奏 / 消息延迟与丢失率（组织摩擦）/
-LLM 温度与调用预算。引擎默认值集中在 `engine/world.py` 的 `DEFAULT_TUNING`。
+Live-tunable: combat strength / artillery power / entrenchment bonus / terrain
+defense / supply rate & radius / recon scale / intel error / move speed / reporting
+cadence / message latency & loss (friction) / LLM temperature & per-tick budget.
+Engine defaults live in `DEFAULT_TUNING` (`engine/world.py`).
 
-## 复盘指标（右栏"复盘指标"页签）
+## After-action metrics (right panel)
 
-从事件流实时统计双方/多方指挥链健康度：命令下行量、确认率、确认延迟、
-态势报告/请示/告警量、情报量、决策次数、电文中断、隔离拦截、LLM 降级、
-剩余兵力、战役目标得分。事件全量落盘 `runs/*/events.jsonl` 可做离线分析。
+Live per-faction command health: orders issued, **acknowledgement rate**, ack
+delay, situation reports, requests, escalations, intel, decision counts, message
+losses, isolation blocks, LLM fallbacks, remaining strength, objective scores.
+Full event streams land in `runs/*/events.jsonl` for offline analysis.
 
-## 架构
+## Architecture
 
 ```
 src/wargame/
-├── schemas.py        协议：消息(8类)/世界动作/决策
-├── org.py            编制表：职位即智能体，角色卡+权限+职位级配置
-├── bus.py            阵营消息总线：延迟投递+隔离硬校验+组织摩擦
-├── camps.py          阵营容器：总线+智能体组+情报库
-├── sim.py            仿真编排：投递→决策→引擎→侦察，事件流落盘 JSONL
+├── schemas.py        protocol: messages (8 kinds) / world actions / decisions
+├── org.py            ORBAT: position = agent (role card + authority + config)
+├── bus.py            faction bus: latency delivery + isolation checks + friction
+├── camps.py          faction container: bus + agents + intel store
+├── sim.py            scheduler: deliver → decide → engine → recon, JSONL event log
 ├── agents/
-│   ├── base.py       Agent：信箱+任务队列+记忆+SituationView(视角投影)
-│   ├── rule_policy.py  规则脑（离线确定性，LLM 的降级路径）
-│   └── llm_policy.py   LLM 脑（角色卡+态势→JSON 决策，硬校验兜底）
-├── engine/world.py   确定性引擎：机动/近战/炮兵/补给/侦察/天气/空军/目标
-├── scenarios/        场景：cross_river / normandy / dynamic(AI 导入)
-└── web/              FastAPI(REST+SSE) + 深色指挥中心前端(无构建依赖)
+│   ├── base.py       Agent: mailbox + tasks + memory + SituationView (scoped view)
+│   ├── rule_policy.py  rule brain (offline, deterministic, LLM fallback)
+│   └── llm_policy.py   LLM brain (role card + situation → JSON decision)
+├── engine/world.py   deterministic engine: movement/melee/arty/supply/recon/
+│                     weather/air interdiction/depots/objectives
+├── scenarios/        cross_river / normandy / dynamic (AI-imported)
+└── web/              FastAPI (REST+SSE) + dark command-center frontend (no build step)
 ```
 
-> 包名 `wargame`、产品名 Sandtable——历史原因，后续大版本可能统一。
+> Package name is `wargame`, product name is Sandtable — historical reasons; a
+> future major version may unify them.
 
 ## Testing
 
@@ -129,24 +147,16 @@ src/wargame/
 python -m pytest -q
 ```
 
-覆盖：指挥链下行/上行贯通、交战与情报发生、阵营隔离硬拦截、
-同种子世界可复现、情报库纯净性、多方诺曼底冒烟、AI 动态场景构建、复盘指标。
+Covers: command-chain flow (down and up), combat and intel occurrence, hard
+cross-faction isolation blocks, seed determinism, intel-store purity, the
+multi-faction Normandy scenario, the dynamic scenario builder, metrics.
 
 ## Contributing
 
-欢迎 Issue 与 PR。提交前请：
-
-1. `python -m pytest -q` 全绿；
-2. 新场景/新机制附带冒烟测试；
-3. 代码注释跟随中文、只解释"为什么"；
-4. 永远不要提交 `.env`、密钥或任何真实凭据（CI 与维护者会检查）。
-
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## Security
-
-见 [SECURITY.md](SECURITY.md)。密钥永远走环境变量或 `.env`（已 gitignore），
-本项目的 LLM Key 泄漏在 `.env` 中即可，切勿写进源码或文档。
+Issues and PRs welcome. Please run `python -m pytest -q` before submitting, add
+smoke tests for new mechanics/scenarios, write code comments in Chinese explaining
+*why*, and **never commit** `.env`, API keys or tokens. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

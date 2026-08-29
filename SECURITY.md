@@ -1,31 +1,32 @@
-# 安全策略（Security Policy）
+# Security Policy
 
-## 支持版本
+## Reporting a vulnerability
 
-| 版本 | 支持 |
-|---|---|
-| 0.1.x | ✅ |
+Please report vulnerabilities through private security advisories or by
+contacting the maintainers directly. Do **not** open a public issue for
+exploitable problems. Expect a response within 7 days.
 
-## 报告漏洞
+## Secrets and credentials (hard rules)
 
-请通过 GitHub Security Advisories（私有）或联系维护者私下报告，
-**不要**在公开 Issue 中披露可利用细节。收到报告后 7 天内给出响应，
-修复后在本文件登记。
+This project touches two kinds of sensitive data:
 
-## 密钥与凭据红线
+1. **LLM API keys** — belong in `.env` (gitignored) or environment variables.
+   They may also be entered in the web settings panel (kept in process
+   memory only; never written to disk, never echoed back).
+2. **Git remote tokens** — use your platform's credential manager or SSH keys;
+   do not embed tokens in URLs that end up in committed files or shell history.
 
-本项目涉及两类敏感信息，处理规则如下：
-
-1. **LLM API Key**：只放 `.env`（已被 `.gitignore` 排除）或运行时环境变量；
-   也可以在 Web 设置面板里填写（服务内存中保存，不落盘、不回显）。
-2. **Git 远程仓库凭据**：使用各平台令牌时建议配置凭据管理器
-   （`git config credential.helper`）或 SSH Key，不要把令牌写进远程 URL
-   后再提交任何文件。
-
-贡献者提交前请运行：
+Before pushing, check:
 
 ```bash
-git grep -inE "sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}" -- . ':!*.md'
+git grep -inE "sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}" -- ':!*.md'
 ```
 
-确认无泄漏后再推送。历史提交中的密钥视为已泄漏，应立即在服务商侧吊销轮换。
+Any key that has ever reached a commit must be considered compromised:
+revoke and rotate it at the provider immediately.
+
+## Supported versions
+
+| Version | Supported |
+|---|---|
+| 0.1.x | ✅ |

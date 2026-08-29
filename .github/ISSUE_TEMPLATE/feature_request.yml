@@ -1,0 +1,14 @@
+name: Feature request
+description: Propose a new mechanic, scenario or metric
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: The problem or the fun
+      description: What is missing, or what would make the simulation richer?
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Proposed design
+      description: How would it fit the engine (events, tuning keys, factions)?
+    validations: { required: true }

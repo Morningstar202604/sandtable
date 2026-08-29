@@ -1,0 +1,23 @@
+name: Bug report
+description: Report a reproducible problem
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the behavior and what you expected instead.
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: "Exact commands + scenario + seed. Example: `python -m wargame.cli run --scenario normandy --ticks 30`"
+      value: |
+        scenario:
+        seed:
+        policy (rule/llm):
+        commands:
+    validations: { required: true }
+  - type: input
+    attributes:
+      label: Version / commit
+      placeholder: "0.1.0 or git sha"
