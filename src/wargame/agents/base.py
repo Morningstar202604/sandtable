@@ -98,7 +98,9 @@ class Agent:
         self.tuning = tuning if tuning is not None else {}
         self.inbox: list[Message] = []
         self.tasks: list[Task] = []
-        self.memory: deque[str] = deque(maxlen=40)
+        # 记忆容量可在设置面板调整（memory_size）：越大越"记仇"，越小越健忘
+        self.memory: deque[str] = deque(
+            maxlen=max(5, int(self.tuning.get("memory_size", 40) or 40)))
         self.state: dict = {}  # 跨决策周期的局部状态（后续目标、已告警标记等）
         self.last_thought = ""
         self.last_active = -99

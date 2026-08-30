@@ -1,4 +1,6 @@
-# Sandtable
+# 将台 WARGENERALS
+
+> **多智能体兵棋推演系统**，模拟军队指挥链如何在摩擦与延迟中指挥、协同与反馈。不只模拟部队怎么打，更模拟*指挥机器*如何运转。Python + FastAPI + 可插拔 LLM 智能体。
 
 <p align="center">
   <strong>多智能体军队指挥链推演系统——模拟的重点是"军队这台组织机器如何指挥、协同与反馈"，而不只是部队怎么打。</strong>
@@ -15,9 +17,16 @@
   <img alt="LLM" src="https://img.shields.io/badge/LLM-%E5%8F%AF%E9%80%89%EF%BC%88%E8%A7%84%E5%88%99%E6%A8%A1%E5%BC%8F%E7%A6%BB%E7%BA%BF%E5%8F%AF%E8%B7%91%EF%BC%89-orange">
 </p>
 
-## 为什么做 Sandtable
+<p align="center">
+  <strong>标签：</strong>
+  <code>兵棋推演</code> · <code>多智能体</code> · <code>llm</code> · <code>指挥控制</code> ·
+  <code>军事仿真</code> · <code>ai-agents</code> · <code>任务式指挥</code> ·
+  <code>组织摩擦</code> · <code>诺曼底</code> · <code>fastapi</code>
+</p>
 
-多数兵棋项目模拟的是战场，Sandtable 模拟的是战场背后的**指挥机器**：
+## 为什么做将台（WARGENERALS）
+
+多数兵棋项目模拟的是战场，将台模拟的是战场背后的**指挥机器**：
 上级意图如何被层层分解为命令、下级如何自主执行并反馈、同级如何横向协同、
 信息如何在延迟与丢失中失真。地图只是背景板，**组织本身才是被模拟的对象**。
 
@@ -120,7 +129,7 @@ src/wargame/
 └── web/              FastAPI(REST+SSE) + 深色指挥中心前端（无构建依赖）
 ```
 
-> 包名 `wargame`、产品名 Sandtable——历史原因，后续大版本可能统一。
+> Python 包名仍为 `wargame`（import 路径），当前发行包名 `wargenerals`，品牌名 **将台 WARGENERALS**——目录/仓库骨架沿用历史结构，后续可选大版本统一目录名。
 
 ## 测试
 
@@ -139,4 +148,4 @@ python -m pytest -q
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Sandtable Contributors
+[MIT](LICENSE) © 2026 Wargenerals Contributors

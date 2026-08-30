@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in Sandtable — a multi-agent simulation of how
+Thanks for your interest in WARGENERALS — a multi-agent simulation of how
 military *organizations* command, coordinate and report. New scenarios,
 mechanics, metrics and documentation improvements are all welcome.
 
@@ -8,7 +8,7 @@ mechanics, metrics and documentation improvements are all welcome.
 
 ```bash
 git clone <your-fork>
-cd sandtable
+cd wargenerals
 pip install -e .            # or pip install -e ".[dev]" for pytest
 python -m pytest -q         # baseline must be green
 python -m wargame.cli serve # open http://127.0.0.1:8300

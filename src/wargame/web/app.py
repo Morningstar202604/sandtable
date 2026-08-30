@@ -24,7 +24,20 @@ from ..scenarios import SCENARIOS
 from ..scenarios.dynamic import make_dynamic_scenario
 from ..sim import Simulation
 
+try:
+    from .. import battlelib
+    _HAS_BATTLELIB = True
+except Exception:  # noqa: BLE001
+    _HAS_BATTLELIB = False
+
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class BattleBody(BaseModel):
+    """战役定制：环境层 + 全局层 + 双方实力。apply=True 保存并重置推演生效。"""
+
+    config: dict | None = None
+    apply: bool = False
 
 
 class ControlBody(BaseModel):
@@ -40,15 +53,57 @@ class IntentBody(BaseModel):
     text: str
 
 
+class DirectorBody(BaseModel):
+    """将台导演部情况注入：向指定参演方角色送一条电文。"""
+
+    side: str            # 参演方 id（usa / uk / ger / red / blue …）
+    recipient: str       # 目标角色职位 id，如 usa:army
+    kind: str = "intent"  # intent/order/sitrep/intel/escalation/…
+    subject: str = ""
+    body: str = ""
+    sender: str | None = None   # 默认该方上级司令部 {side}:hq
+    priority: int = 0
+
+
+class RoleConfig(BaseModel):
+    pos: str
+    config: dict
+
+
+class RolesBody(BaseModel):
+    updates: list[RoleConfig] = []
+    reset: bool = False  # 一键恢复全部子智能体的想定原始性格/参数
+
+
+class IntentsBody(BaseModel):
+    intents: dict[str, str] | None = None
+
+
 class SettingsBody(BaseModel):
     """推演设置：策略/种子/场景需重置生效；LLM 配置原地生效。"""
 
     policy_mode: str | None = None
     seed: int | None = None
     scenario: str | None = None
+    weather_override: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
+    llm_use_tools: bool | None = None
+    llm_retry: int | None = None
+    llm_timeout: float | None = None
+    llm_top_p: float | None = None
+    llm_frequency_penalty: float | None = None
+    llm_presence_penalty: float | None = None
+    fallback_enabled: bool | None = None
+
+
+class LLMTestBody(BaseModel):
+    """连接测试：携带候选端点（未保存时先测再存）；留空则测当前已保存配置。"""
+
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
 
 
 class FrictionBody(BaseModel):
@@ -75,6 +130,20 @@ class TuningBody(BaseModel):
     report_interval: int | None = None
     withdraw_threshold: float | None = None
     contact_fwd_interval: int | None = None
+    air_scale: float | None = None
+    air_dmg: float | None = None
+    air_prob: float | None = None
+    supply_combat_scale: float | None = None
+    morale_scale: float | None = None
+    low_strength_penalty: float | None = None
+    flank_bonus: float | None = None
+    overrun_scale: float | None = None
+    road_bonus: float | None = None
+    arty_range_scale: float | None = None
+    terrain_cost_scale: float | None = None
+    aggression_scale: float | None = None
+    escalation_delay: int | None = None
+    memory_size: int | None = None
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None
     llm_budget: int | None = None
@@ -87,14 +156,30 @@ _TUNING_CLAMPS = {
     "depot_radius": (2, 16), "recon_scale": (0.3, 4.0), "intel_error": (0, 3),
     "move_scale": (0.3, 4.0), "report_interval": (2, 48),
     "withdraw_threshold": (5, 90), "contact_fwd_interval": (1, 24),
+    "air_scale": (0.0, 3.0), "air_dmg": (0.0, 12.0), "air_prob": (0.0, 0.6),
+    "supply_combat_scale": (0.0, 1.0),
+    "morale_scale": (0.0, 2.0), "low_strength_penalty": (0.0, 0.9),
+    "flank_bonus": (0.0, 2.0), "overrun_scale": (0.0, 1.0),
+    "road_bonus": (0.3, 3.0), "arty_range_scale": (0.5, 2.5),
+    "terrain_cost_scale": (0.3, 3.0),
+    "aggression_scale": (0.2, 3.0), "escalation_delay": (0, 20),
+    "memory_size": (5, 200),
 }
+
+
+class DirectorScriptBody(BaseModel):
+    script: list[dict] = []
 
 
 class SimHost:
     """持有当前仿真实例与后台推进循环。
 
     friction 保存在 host 层而不是仿真层——重置推演后摩擦参数得以延续。
+    role_overrides / intent_overrides 等"导演部配置"持久化到 runs/host_state.json，
+    服务重启后恢复——将台想定与子智能体人格不因重启而丢失。
     """
+
+    STATE_PATH = Path("runs") / "host_state.json"
 
     def __init__(self, policy: str = "auto", seed: int | None = None,
                  scenario: str | None = None) -> None:
@@ -106,13 +191,64 @@ class SimHost:
         self.epoch = 0  # 每次 reset 自增，前端据此重置游标与界面
         self.friction: dict = {"latency_scale": 1.0, "loss_rate": 0.0}
         self.tuning: dict = {}  # 重置后延续的调参（引擎侧有默认值兜底）
+        self.intent_overrides: dict[str, str] = {}  # 导演部设定的各参演方开局意图
+        self.role_overrides: dict[str, dict] = {}   # 导演部对子智能体的角色配置覆盖
+        self.script: list[dict] = []                # 导演部导调剧本（按 tick 触发）
+        self.weather_override: str = ""             # 全局天气覆盖（"" = 沿用想定天气）
+        self.battle: dict = {}                      # 战役定制：环境/全局/双方实力
+        self._load()
         self.sim = self._build()
 
     def _build(self) -> Simulation:
         sim = Simulation(policy_mode=self.policy, seed=self.seed,
-                         scenario=self.scenario, tuning=self.tuning)
+                         scenario=self.scenario, tuning=self.tuning,
+                         intent_overrides=self.intent_overrides,
+                         role_overrides=self.role_overrides,
+                         battle_config=self.battle)
         sim.friction.update(self.friction)
+        if self.weather_override:
+            sim.world.set_weather([(0, self.weather_override)])
+        sim.set_director_script(self.script)
         return sim
+
+    def _load(self) -> None:
+        try:
+            if not self.STATE_PATH.exists():
+                return
+            data = json.loads(self.STATE_PATH.read_text(encoding="utf-8"))
+            if data.get("policy") in ("auto", "rule", "llm"):
+                self.policy = data["policy"]
+            if data.get("seed") is not None:
+                self.seed = int(data["seed"])
+            if data.get("scenario"):
+                self.scenario = data["scenario"]
+            self.friction.update({k: v for k, v in data.get("friction", {}).items()
+                                  if isinstance(v, (int, float))})
+            self.tuning = {k: v for k, v in data.get("tuning", {}).items()
+                           if isinstance(v, (int, float))}
+            self.intent_overrides = dict(data.get("intent_overrides", {}))
+            self.role_overrides = dict(data.get("role_overrides", {}))
+            self.script = [d for d in data.get("script", []) if isinstance(d, dict)]
+            w = data.get("weather_override", "")
+            self.weather_override = w if w in ("clear", "overcast", "rain", "storm") else ""
+            b = data.get("battle", {})
+            self.battle = b if isinstance(b, dict) else {}
+        except Exception:  # noqa: BLE001  状态文件损坏不阻塞启动
+            pass
+
+    def save(self) -> None:
+        try:
+            self.STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self.STATE_PATH.write_text(json.dumps({
+                "policy": self.policy, "seed": self.seed, "scenario": self.scenario,
+                "friction": self.friction, "tuning": self.tuning,
+                "intent_overrides": self.intent_overrides,
+                "role_overrides": self.role_overrides, "script": self.script,
+                "weather_override": self.weather_override,
+                "battle": self.battle,
+            }, ensure_ascii=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
 
     async def loop(self) -> None:
         # 推进循环绝不允许死：单拍异常只记日志并继续，
@@ -153,11 +289,25 @@ def create_app(policy: str = "auto", seed: int | None = None,
         yield
         task.cancel()
 
-    app = FastAPI(title="Sandtable 指挥协同推演", lifespan=lifespan)
+    app = FastAPI(title="将台 WARGENERALS 指挥协同推演", lifespan=lifespan)
+
+    def _scenario_info(key: str, mod) -> dict:
+        fac = getattr(mod, "FACTIONS", None) or \
+            [{"id": "red", "name": "红军"}, {"id": "blue", "name": "蓝军"}]
+        return {
+            "id": key,
+            "name": getattr(mod, "SCENARIO_NAME", key),
+            "codename": getattr(mod, "CODENAME", ""),
+            "era": getattr(mod, "ERA", ""),
+            "theater": getattr(mod, "THEATER", ""),
+            "scale": getattr(mod, "SCALE", ""),
+            "desc": getattr(mod, "SCENARIO_DESC", ""),
+            "sides": [{"id": f["id"], "name": f.get("name", f["id"])} for f in fac],
+        }
 
     @app.get("/api/scenarios")
     def list_scenarios():
-        return [{"id": k, "name": m.SCENARIO_NAME} for k, m in SCENARIOS.items()]
+        return [_scenario_info(k, m) for k, m in SCENARIOS.items()]
 
     @app.post("/api/scenarios/ai_import")
     def ai_import(body: IntentBody):
@@ -203,6 +353,48 @@ def create_app(policy: str = "auto", seed: int | None = None,
             sid = f"{base}_{i}"
         return sid
 
+    @app.get("/api/battle/presets")
+    def list_battle_presets():
+        if not _HAS_BATTLELIB:
+            return {"ok": False, "error": "战役库未加载"}
+        return {"ok": True, "presets": battlelib.presets_meta()}
+
+    @app.get("/api/battle/params")
+    def get_battle_params():
+        """战役定制的量化参数定义：前端据 global/side_dims/env/weather 生成滑块组。"""
+        if not _HAS_BATTLELIB:
+            return {"ok": False, "error": "战役库未加载"}
+        return {"ok": True, **battlelib.params_meta()}
+
+    @app.get("/api/battle")
+    def get_battle():
+        return {"ok": True, "config": host.battle,
+                "factions": [{"id": s, "name": host.sim.camp_names.get(s, s)}
+                             for s in host.sim.factions],
+                "summary": getattr(host.sim, "battle_summary", {}),
+                "side_mod": host.sim.world.side_mod,
+                "presets": battlelib.presets_meta() if _HAS_BATTLELIB else []}
+
+    @app.post("/api/battle")
+    def post_battle(body: BattleBody):
+        """保存一份战役定制配置；apply 为真则在下次重置推演时落到引擎并把结果回读。"""
+        if not _HAS_BATTLELIB:
+            return {"ok": False, "error": "战役库未加载"}
+        cfg = body.config or {}
+        # 清洗：只保留合法结构（env/global/sides），避免脏数据进入状态文件
+        clean = {"env": dict(cfg.get("env") or {}),
+                 "global": dict(cfg.get("global") or {}),
+                 "sides": {str(k): dict(v) for k, v in (cfg.get("sides") or {}).items()}}
+        if cfg.get("preset"):
+            clean["preset"] = str(cfg["preset"])
+        host.battle = clean
+        host.save()
+        if body.apply:
+            host.reset()  # 重建仿真并把 battle 应用到世界引擎
+        return {"ok": True, "config": host.battle,
+                "summary": getattr(host.sim, "battle_summary", {}),
+                "epoch": host.epoch}
+
     @app.get("/api/state")
     def get_state():
         snap = host.sim.snapshot()
@@ -242,11 +434,103 @@ def create_app(policy: str = "auto", seed: int | None = None,
         host.sim.inject_intent(body.side, body.text.strip()[:400])
         return {"ok": True}
 
+    @app.post("/api/director")
+    def director(body: DirectorBody):
+        """导演部情况注入：任意参演方、任意角色、任意电文种类。"""
+        body.body = body.body.strip()
+        if not body.recipient or not body.body or body.side not in host.sim.camps:
+            return {"ok": False, "error": "参数无效（需指定参演方/目标角色/情况内容）"}
+        ok = host.sim.director_message(
+            body.side, body.recipient.strip(), body.kind,
+            body.subject.strip()[:60], body.body[:600],
+            sender=body.sender, priority=body.priority)
+        if not ok:
+            return {"ok": False, "error": "注入失败：目标角色不在该参演方或发送失败"}
+        return {"ok": True}
+
+    @app.get("/api/roles")
+    def get_roles():
+        """子智能体角色清单：参演方 → 各职位的角色卡与当前配置（供将台作业室配置）。"""
+        registry = host.sim.registry
+        sides = {}
+        for side in host.sim.factions:
+            pos_list = []
+            for p in registry.by_id.values():
+                if p.side == side:
+                    merged = dict(p.config or {})
+                    merged.update(host.role_overrides.get(p.id, {}))
+                    pos_list.append({
+                        "id": p.id, "title": p.title, "archetype": p.archetype,
+                        "parent": p.parent, "staff": p.staff, "virtual": p.virtual,
+                        "units": p.units, "side": side, "side_name": p.side_name,
+                        "config": merged,
+                    })
+            sides[side] = {"name": host.sim.camp_names.get(side, side),
+                           "positions": pos_list}
+        return {"sides": sides}
+
+    @app.post("/api/roles")
+    def post_roles(body: RolesBody):
+        """导演部配置子智能体：性格/指挥风格/行为参数，实时与重置后均生效。"""
+        registry = host.sim.registry
+        if body.reset:
+            # 一键恢复：清空全部覆盖并重建仿真，位置配置回到想定原始值
+            host.role_overrides = {}
+            host.save()
+            host.reset()
+            return {"ok": True, "reset": True}
+        for u in body.updates:
+            p = registry.get(u.pos)
+            if not p:
+                continue
+            cfg = dict(u.config)
+            host.role_overrides[u.pos] = dict(p.config or {}, **cfg)
+            p.config.update(cfg)
+        host.save()
+        return {"ok": True}
+
+    @app.get("/api/director/script")
+    def get_script():
+        return {"script": host.script}
+
+    @app.post("/api/director/script")
+    def post_script(body: DirectorScriptBody):
+        """导演部保存导调剧本：一组按 tick 自动触发的情况注入。"""
+        host.script = [s for s in body.script if isinstance(s, dict)]
+        host.sim.set_director_script(host.script)
+        host.save()
+        return {"ok": True, "pending": len(host.sim.director_script)}
+
+    @app.get("/api/intents")
+    def get_intents():
+        return {"intents": dict(host.intent_overrides),
+                "names": dict(host.sim.camp_names),
+                "factions": list(host.sim.factions),
+                "defaults": dict(getattr(host.sim, "_intents", {}))}
+
+    @app.post("/api/intents")
+    def post_intents(body: IntentsBody):
+        """导演部设置各参演方开局意图（下次重置推演时生效）。"""
+        if body.intents is None:
+            host.intent_overrides = {}
+        else:
+            for k, v in body.intents.items():
+                if k in host.sim.camps:
+                    host.intent_overrides[k] = v or ""
+        host.save()
+        return {"ok": True, "intents": dict(host.intent_overrides)}
+
     @app.get("/api/settings")
     def get_settings():
         return {
             "policy_mode": host.policy, "seed": host.seed, "speed": host.speed,
             "scenario": host.scenario,
+            "weather_override": host.weather_override,
+            "weather_options": [{"id": "auto", "name": "沿用想定"},
+                                {"id": "clear", "name": "晴"},
+                                {"id": "overcast", "name": "阴"},
+                                {"id": "rain", "name": "雨"},
+                                {"id": "storm", "name": "风暴"}],
             "scenarios": [{"id": k, "name": m.SCENARIO_NAME}
                           for k, m in SCENARIOS.items()],
             "friction": dict(host.sim.friction),
@@ -257,7 +541,14 @@ def create_app(policy: str = "auto", seed: int | None = None,
                     "base_url": llm_client.base_url,
                     "temperature": llm_client.temperature,
                     "max_tokens": llm_client.max_tokens,
-                    "budget": settings.max_llm_calls_per_tick},
+                    "budget": settings.max_llm_calls_per_tick,
+                    "use_tools": settings.llm_use_tools,
+                    "retry": settings.llm_retry,
+                    "timeout": settings.llm_timeout,
+                    "top_p": llm_client.top_p,
+                    "frequency_penalty": llm_client.frequency_penalty,
+                    "presence_penalty": llm_client.presence_penalty,
+                    "fallback_enabled": settings.fallback_enabled},
         }
 
     @app.post("/api/settings")
@@ -268,12 +559,34 @@ def create_app(policy: str = "auto", seed: int | None = None,
             host.seed = int(body.seed)
         if body.scenario and body.scenario in SCENARIOS:
             host.scenario = body.scenario
+        if body.weather_override is not None:
+            w = "auto" if body.weather_override == "" else body.weather_override
+            if w in ("", "auto", "clear", "overcast", "rain", "storm"):
+                host.weather_override = "" if w == "auto" else w
         # API Key 只写不读：前端不回显，留空表示保持不变
         if body.llm_base_url or body.llm_model or body.llm_api_key:
             llm_client.reconfigure(api_key=body.llm_api_key or None,
                                    base_url=body.llm_base_url or None,
                                    model=body.llm_model or None)
+        # 智能体运行时/健壮性参数（原地生效，无需重置）
+        if body.llm_use_tools is not None:
+            settings.llm_use_tools = bool(body.llm_use_tools)
+        if body.llm_retry is not None:
+            settings.llm_retry = max(1, min(5, int(body.llm_retry)))
+        if body.llm_timeout is not None:
+            settings.llm_timeout = max(5, min(300, float(body.llm_timeout)))
+        # 采样参数：原地生效，随请求下发（部分端点不支持则忽略）
+        if body.llm_top_p is not None:
+            llm_client.reconfigure(top_p=body.llm_top_p)
+        if body.llm_frequency_penalty is not None:
+            llm_client.reconfigure(frequency_penalty=body.llm_frequency_penalty)
+        if body.llm_presence_penalty is not None:
+            llm_client.reconfigure(presence_penalty=body.llm_presence_penalty)
+        # LLM 失败容错开关（是否自动降级为规则策略）
+        if body.fallback_enabled is not None:
+            settings.fallback_enabled = bool(body.fallback_enabled)
         host.reset()
+        host.save()
         return {"ok": True, "policy_mode": host.policy, "seed": host.seed,
                 "scenario": host.scenario,
                 "llm_available": llm_client.available}
@@ -285,6 +598,7 @@ def create_app(policy: str = "auto", seed: int | None = None,
         if body.loss_rate is not None:
             host.friction["loss_rate"] = max(0.0, min(0.6, body.loss_rate))
         host.sim.friction.update(host.friction)
+        host.save()
         return {"ok": True, "friction": dict(host.friction)}
 
     @app.post("/api/tuning")
@@ -301,7 +615,75 @@ def create_app(policy: str = "auto", seed: int | None = None,
             lo, hi = _TUNING_CLAMPS.get(k, (0.0, 100.0))
             host.tuning[k] = max(lo, min(hi, v))
         host.sim.tuning.update(host.tuning)
+        host.save()
         return {"ok": True, "tuning": dict(host.sim.tuning)}
+
+    @app.post("/api/llm/test")
+    def test_llm(body: LLMTestBody):
+        """连接测试：携带候选端点先测后存；留空测已保存配置。测试不落库。"""
+        import time
+        saved = (llm_client.api_key, llm_client.base_url, llm_client.model)
+        if body.api_key or body.base_url or body.model:
+            llm_client.reconfigure(api_key=body.api_key or None,
+                                   base_url=body.base_url or None,
+                                   model=body.model or None)
+        if not llm_client.available:
+            llm_client.reconfigure(api_key=saved[0] or None, base_url=saved[1] or None,
+                                   model=saved[2] or None)
+            return {"ok": False, "model": llm_client.model,
+                    "error": "未配置 API Key，无法测试连接"}
+        t0 = time.perf_counter()
+        raw, err = "", ""
+        try:
+            raw = llm_client.chat("你是连接测试助手。", "只回复两个字母：OK")
+        except Exception as e:  # noqa: BLE001
+            err = str(e)[:220]
+        finally:
+            ms = round((time.perf_counter() - t0) * 1000)
+            llm_client.reconfigure(api_key=saved[0] or None, base_url=saved[1] or None,
+                                   model=saved[2] or None)
+            llm_client.reset_capture()
+        if err:
+            return {"ok": False, "model": body.model or saved[2],
+                    "latency_ms": ms, "error": err}
+        return {"ok": True, "model": body.model or saved[2],
+                "latency_ms": ms, "reply": raw[:80]}
+
+    @app.get("/api/debug/agents")
+    def get_debug_agents(pos_id: str | None = None):
+        """调试中心：各子智能体的实时内部状态快照（任务/记忆/信箱/局部状态）。"""
+        return host.sim.agent_snapshot(pos_id)
+
+    @app.get("/api/debug/traces")
+    def get_debug_traces(since: int = 0, limit: int = 100, pos: str | None = None):
+        """调试中心：智能体决策轨迹。since=游标增量拉取，pos 可按职位过滤。"""
+        traces = [t for t in host.sim.traces
+                  if t["seq"] > since and (not pos or t["pos"] == pos)]
+        return {"traces": traces[-limit:],
+                "last_seq": host.sim._trace_seq,
+                "total": len(host.sim.traces)}
+
+    @app.get("/api/debug/export")
+    def get_debug_export():
+        """导出整场推演复盘 JSON：元信息 + 事件流 + 全部决策 trace + 智能体终态。
+
+        供离线复盘/外部工具消费；也作为接外部可观测平台的中间数据格式。
+        """
+        return {
+            "meta": {
+                "scenario": host.sim.scenario_name,
+                "policy": host.policy, "seed": host.seed,
+                "ticks": host.sim.tick, "epoch": host.epoch,
+                "factions": [{"id": s, "name": host.sim.camp_names.get(s, s)}
+                             for s in host.sim.factions],
+                "exported_at": __import__("datetime").datetime.now().isoformat(),
+            },
+            "tuning": dict(host.sim.tuning),
+            "friction": dict(host.sim.friction),
+            "events": host.sim.events,
+            "traces": host.sim.traces,
+            "agents": host.sim.agent_snapshot(),
+        }
 
     @app.get("/api/stream")
     async def stream():

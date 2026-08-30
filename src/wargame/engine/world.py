@@ -42,6 +42,17 @@ DEFAULT_TUNING: dict = {
     "arty_scale": 1.0,          # 炮兵伤害倍率
     "entrench_bonus": 0.4,      # 工事防御加成（受伤除以 1+bonus）
     "terrain_def_scale": 1.0,   # 地形防御加成倍率
+    "supply_combat_scale": 0.5, # 补给影响战力的强度（0=无影响，1=完全由补给决定）
+    # 士气与战损
+    "morale_scale": 1.0,        # 士气影响强度（放大幅值；0=士气无影响）
+    "low_strength_penalty": 0.3,# 兵力低于 40% 时的战力折扣（0=无，1=几乎崩溃）
+    "flank_bonus": 0.5,         # 侧翼夹击：围攻同一目标时每多一人的伤害加成
+    "overrun_scale": 0.25,      # 追击：对已残损目标按战损比例追加的伤害
+    # 机动
+    "move_scale": 1.0,          # 单位移速倍率
+    "road_bonus": 1.0,          # 道路/铁路机动效率倍率（越大路走得越快）
+    "terrain_cost_scale": 1.0,  # 越野通行惩罚倍率（沼泽/森林/渡场越难走）
+    "arty_range_scale": 1.0,    # 炮兵射程倍率（影响射程判定与停车保持火力）
     # 后勤
     "supply_regen": 5.0,        # 补给站半径内每拍回复
     "supply_drain": 3.0,        # 补给站半径外每拍消耗
@@ -49,12 +60,14 @@ DEFAULT_TUNING: dict = {
     # 侦察
     "recon_scale": 1.0,         # 侦察半径倍率
     "intel_error": 1,           # 敌情坐标误差（±格）
-    # 机动
-    "move_scale": 1.0,          # 单位移速倍率
     # 智能体节奏（rule 策略经共享字典读取；LLM 模式下影响唤醒周期）
     "report_interval": 8,       # 例行报告间隔（拍）
     "withdraw_threshold": 40,   # 兵力低于此值触发告警并转入据守
     "contact_fwd_interval": 4,  # 接触战况上报的最小间隔（拍）
+    # 智能体性格与认知
+    "aggression_scale": 1.0,    # 进攻倾向：越高越敢打（等效压低告警撤退阈值）
+    "escalation_delay": 0,      # 告警上报延迟（拍）：连败几拍才向上告警
+    "memory_size": 40,          # 每个子智能体的记忆容量（条）
     # 空军遮断
     "air_scale": 1.0,           # 遮断强度倍率（0 = 关闭空军）
     "air_dmg": 3.0,             # 单次遮断打击基准伤害
@@ -71,6 +84,7 @@ class Unit:
     x: int
     y: int
     strength: float = 100.0
+    strength_max: float = 100.0   # 战役定制：阵营"数量规模"可放大/收缩单位总耐久
     supply: float = 100.0
     order: dict | None = None          # {"kind": move/attack, "target": [x,y]}
     path: list = field(default_factory=list)
@@ -115,6 +129,11 @@ def _d(a: tuple[int, int], b: tuple[int, int]) -> int:
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
+def _arty_range(world: "World", unit: Unit) -> int:
+    """炮兵有效射程：基础射程 × 射程倍率（设置面板可调）。"""
+    return max(1, int(unit.rng * float(world.tuning.get("arty_range_scale", 1.0))))
+
+
 class World:
     def __init__(self, w: int = GRID_W, h: int = GRID_H) -> None:
         self.w, self.h = w, h
@@ -129,10 +148,24 @@ class World:
         # 声明了关系对则只按声明开战——同盟阵营即便接壤也不交火
         self.war_pairs: set = set()
         self.tuning: dict = dict(DEFAULT_TUNING)
+        # 每方独立属性（战役定制"从人到武器到双方装备"）：side → {hp,atk,def,speed,supply,spirit}
+        # 缺省 1.0 = 无修正。hp 在 set_side_mods 时写入单位 strength_max。
+        self.side_mod: dict = {}
 
     # ---- 构建 ----
     def add_unit(self, uid: str, side: str, name: str, kind: str, x: int, y: int) -> None:
         self.units[uid] = Unit(id=uid, side=side, name=name, kind=kind, x=x, y=y)
+
+    def set_side_mods(self, mods: dict | None) -> None:
+        """战役定制：设置每方(数量/火力/装甲/机动/后勤/士气)修正，并应用到全部单位当量血量。"""
+        self.side_mod = {s: {"hp": 1.0, "atk": 1.0, "def": 1.0, "speed": 1.0,
+                             "supply": 1.0, "spirit": 1.0, **m}
+                         for s, m in (mods or {}).items()}
+        for u in self.units.values():
+            hp = max(0.3, float(self.side_mod.get(u.side, {}).get("hp", 1.0)))
+            u.strength_max = 100.0 * hp
+            u.strength = min(u.strength_max, max(u.strength, 5.0))
+            u.strength = u.strength_max  # 数量规模在开局即定当量：耐久上限即当前量
 
     def set_depot(self, side: str, x: int, y: int) -> None:
         self.depots.append({"x": x, "y": y, "owner": side})
@@ -144,6 +177,24 @@ class World:
     def set_weather(self, schedule: list[tuple[int, str]]) -> None:
         self.weather_schedule = sorted(schedule)
         self.weather = self.weather_schedule[0][1]
+
+    def geo_seed(self, forest: float = 0.0, hill: float = 0.0,
+                 swamp: float = 0.0) -> None:
+        """战役定制：按密度在原有地图的可通行格上播种森林/丘陵/沼泽。
+
+        只在 "." 开阔格上落种——绝不覆盖河流、桥梁、城镇、道路与想定原有的
+        地形要素，避免破坏历史地图的关键走廊与目标点。种子固定，可复现。
+        """
+        walkable = [(x, y) for y in range(self.h) for x in range(self.w)
+                    if self.grid[y][x] == "."]
+        if not walkable:
+            return
+        rng = random.Random(0xCAFE + int(forest * 1000) + int(hill * 1000)
+                            + int(swamp * 1000))
+        for ch, den in (("f", forest), ("h", hill), ("m", swamp)):
+            n = min(len(walkable), int(den * len(walkable)))
+            for x, y in rng.sample(walkable, n):
+                self.grid[y][x] = ch
 
     def set_air_power(self, air: dict) -> None:
         self.air_power = dict(air)
@@ -254,7 +305,8 @@ class World:
                 continue
             # 炮兵进入射击阵地后停车保持火力，不向目标贴脸
             if (unit.kind == "artillery" and unit.order.get("kind") == "attack"
-                    and _d((unit.x, unit.y), tuple(unit.order["target"])) <= unit.rng):
+                    and _d((unit.x, unit.y), tuple(unit.order["target"]))
+                    <= _arty_range(self, unit)):
                 unit.path = []
                 continue
             unit.mp += unit.speed * self.tuning["move_scale"]
@@ -266,7 +318,12 @@ class World:
                     break
                 if not self.passable(nx, ny):
                     break
-                cost = ENTER_COST[self.terrain(nx, ny)]
+                t = self.terrain(nx, ny)
+                cost = ENTER_COST[t]
+                if t == "r":  # 道路/铁路：road_bonus 越高走得越快
+                    cost /= max(0.1, float(self.tuning.get("road_bonus", 1.0)))
+                else:  # 越野：terrain_cost_scale 越高越难通过（沼泽/森林/渡场）
+                    cost *= max(0.1, float(self.tuning.get("terrain_cost_scale", 1.0)))
                 if unit.mp < cost:
                     break
                 unit.mp -= cost
@@ -302,20 +359,49 @@ class World:
                            "side": u.side, "dmg": round(dmg, 1),
                            "x": u.x, "y": u.y})
 
-    def _dmg(self, rng: random.Random, attacker: Unit, defender: Unit) -> float:
+    def _dmg(self, rng: random.Random, attacker: Unit, defender: Unit,
+             attackers: int = 1) -> float:
         if not attacker.alive or attacker.strength <= 0:
             return 0.0
-        base = 8.0 * attacker.atk * (attacker.strength / 100) * (0.5 + 0.5 * attacker.supply / 100)
+        am = self.side_mod.get(attacker.side, {})
+        dm = self.side_mod.get(defender.side, {})
+        # 补给影响战力：s=0 时补给无影响（恒为满战力）；s=1 时补给归零战力减半
+        scs = float(self.tuning.get("supply_combat_scale", 0.5))
+        st = attacker.strength / 100
+        # 士气与战损：兵力过低战力衰减（morale_scale 放大幅值，low_strength_penalty 定折扣）
+        # 阵营"士气"改写成抗崩系数：士气越高越不因残兵而崩（进入 discount/spirit）
+        spirit = max(0.2, float(am.get("spirit", 1.0)))
+        if st < 0.4:
+            st *= (1 - float(self.tuning.get("low_strength_penalty", 0.3))
+                   * float(self.tuning.get("morale_scale", 1.0)) / spirit)
+        base = (8.0 * attacker.atk * st * float(am.get("atk", 1.0))
+                * (1 - scs + scs * attacker.supply / 100))
+        # 侧翼夹击：多个单位围攻同一目标时，每多一个攻击者叠加加成
+        if attackers > 1:
+            base *= 1 + float(self.tuning.get("flank_bonus", 0.5)) * (attackers - 1)
+        # 追击：对已残损目标按战损比例追加伤害（overrun_scale=0 即关闭）
+        if defender.strength < 100:
+            base *= 1 + float(self.tuning.get("overrun_scale", 0.25)) * (1 - defender.strength / 100)
         terr_def = TERRAIN_DEF.get(self.terrain(defender.x, defender.y), 0.0)
         guard = 1 + terr_def * float(self.tuning.get("terrain_def_scale", 1.0))
         if defender.entrenched:
             guard += float(self.tuning.get("entrench_bonus", 0.4))
         guard *= defender.dfn
+        guard *= max(0.2, float(dm.get("def", 1.0)))   # 阵营"装甲防护"
         return base * float(self.tuning.get("combat_scale", 1.0)) / guard * rng.uniform(0.75, 1.25)
 
     def _melee(self, rng: random.Random, events: list[dict]) -> None:
         alive = [u for u in self.units.values() if u.alive]
         contact: dict[str, dict] = {}
+        # 先统计每单位本轮的围攻者数量（侧翼夹击按围攻人数加成）
+        attackers: dict[str, int] = {}
+        for u in alive:
+            for e in alive:
+                if (e.side == u.side or not self.at_war(u.side, e.side)
+                        or _d((u.x, u.y), (e.x, e.y)) > 1):
+                    continue
+                attackers[u.id] = attackers.get(u.id, 0) + 1
+                attackers[e.id] = attackers.get(e.id, 0) + 1
         done: set[tuple[str, str]] = set()
         for u in alive:
             for e in alive:
@@ -326,7 +412,8 @@ class World:
                 if key in done:
                     continue
                 done.add(key)  # type: ignore[arg-type]
-                du, de = self._dmg(rng, e, u), self._dmg(rng, u, e)
+                du = self._dmg(rng, e, u, attackers.get(e.id, 1))
+                de = self._dmg(rng, u, e, attackers.get(u.id, 1))
                 u.strength -= du
                 e.strength -= de
                 for victim, dmg, foe in ((u, du, e), (e, de, u)):
@@ -342,12 +429,16 @@ class World:
                      if u.alive and u.kind == "artillery"
                      and u.order and u.order["kind"] == "attack"]:
             tx, ty = arty.order["target"]
-            if _d((arty.x, arty.y), (tx, ty)) > arty.rng:
+            if _d((arty.x, arty.y), (tx, ty)) > _arty_range(self, arty):
                 continue  # 射程外：保持待令，由师部前移炮兵
             for t in [u for u in self.units.values()
                       if u.alive and self.at_war(arty.side, u.side)
                       and _d((u.x, u.y), (tx, ty)) <= 1]:
-                base = 6.0 * arty.atk * (arty.strength / 100) * (0.5 + 0.5 * arty.supply / 100)
+                ast = arty.strength / 100
+                if ast < 0.4:  # 炮兵也有士气与战损
+                    ast *= (1 - float(self.tuning.get("low_strength_penalty", 0.3))
+                            * float(self.tuning.get("morale_scale", 1.0)))
+                base = 6.0 * arty.atk * ast * (0.5 + 0.5 * arty.supply / 100)
                 terr_def = TERRAIN_DEF.get(self.terrain(t.x, t.y), 0.0)
                 guard = (1 + terr_def * float(self.tuning.get("terrain_def_scale", 1.0))
                          + (float(self.tuning.get("entrench_bonus", 0.4)) if t.entrenched else 0.0))

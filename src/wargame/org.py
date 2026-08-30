@@ -76,10 +76,16 @@ def _pos(side: Side, key: str, title: str, archetype: str, parent: str | None,
 
 def build_camp_org(side: Side, titles: dict[str, str] | None = None,
                    side_name: str | None = None,
-                   configs: dict[str, dict] | None = None) -> list[Position]:
-    """构建一个阵营的完整指挥体系。结构固定（军—师—团 × 2），命名与职位级
-    配置（指挥风格/性格/行为参数）可由场景覆盖，以支持历史编制套进同一套
-    组织模型——如诺曼底的盟军/德军。"""
+                   configs: dict[str, dict] | None = None,
+                   orbat: list[dict] | None = None) -> list[Position]:
+    """构建一个阵营的完整指挥体系（ORBAT）。
+
+    结构固定（军—师—团 × 2）能满足标准训练想定；但一场"各种大型战役"
+    往往有不同兵力编成、不同指挥层级——为此支持场景用 orbat 覆盖整棵编制：
+      orbat: [{key, title?, archetype, parent?, units?, staff?, virtual?}]
+    parent 可写简写键（如 "army"）或全名（如 "red:army"）。
+    命名、职位级配置（指挥风格/性格/行为参数）始终可由场景 titles/configs 覆盖。
+    """
     s = side_name or SIDE_NAME.get(side, side)
     t = titles or {}
     cf = configs or {}
@@ -87,6 +93,25 @@ def build_camp_org(side: Side, titles: dict[str, str] | None = None,
 
     def T(key: str, default: str) -> str:
         return t.get(key, default)
+
+    # 场景自定义编制：真正意义的各种大型战役不必套固定模板
+    if orbat:
+        out: list[Position] = []
+        for node in orbat:
+            key = node["key"]
+            parent = node.get("parent")
+            if parent and not str(parent).startswith(f"{side}:"):
+                parent = f"{side}:{parent}"
+            out.append(_pos(
+                side, key,
+                node.get("title") or T(key, str(key)),
+                node.get("archetype", "army_cmd"),
+                parent,
+                units=[u(str(x)) for x in node.get("units", [])],
+                staff=bool(node.get("staff", False)),
+                virtual=bool(node.get("virtual", False)),
+                side_name=s, config=cf.get(key)))
+        return out
 
     positions = [
         # 上级司令部：虚拟职位，只注入任务不参与推演

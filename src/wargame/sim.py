@@ -26,7 +26,10 @@ from .schemas import Message, MsgKind, WorldAction
 class Simulation:
     def __init__(self, policy_mode: str = "auto", seed: int | None = None,
                  default_intents: bool = True, run_dir: Path | None = None,
-                 scenario: str | None = None, tuning: dict | None = None) -> None:
+                 scenario: str | None = None, tuning: dict | None = None,
+                 intent_overrides: dict | None = None,
+                 role_overrides: dict | None = None,
+                 battle_config: dict | None = None) -> None:
         from .scenarios import DEFAULT_SCENARIO, load_scenario
 
         self.seed = settings.seed if seed is None else seed
@@ -47,9 +50,11 @@ class Simulation:
         self.camp_names = {f["id"]: f["name"] for f in factions}
         titles = getattr(mod, "ORG_TITLES", None) or {}
         configs = getattr(mod, "ORG_CONFIG", None) or {}
+        orbats = getattr(mod, "ORBAT", None) or {}
         self.registry = Registry(sum(
             (build_camp_org(f["id"], titles=titles.get(f["id"]),
-                            side_name=f["name"], configs=configs.get(f["id"]))
+                            side_name=f["name"], configs=configs.get(f["id"]),
+                            orbat=orbats.get(f["id"]))
              for f in factions), []))
         self.world: World = mod.build_world()
         self.world.set_weather(getattr(mod, "WEATHER", None) or [(0, "clear")])
@@ -62,6 +67,16 @@ class Simulation:
         if tuning:
             self.world.tuning.update(tuning)
         self.tuning = self.world.tuning
+        # 战役定制：在场景基础上套一层"环境/全局/双方实力"（battlelib）
+        self.battle: dict = dict(battle_config or {})
+        self.battle_summary: dict = dict(self.battle)
+        if battle_config:
+            try:
+                from . import battlelib
+                self.battle_summary = battlelib.apply_battle(self, battle_config)
+            except Exception:  # noqa: BLE001  定制异常不阻塞推演，回退想定原始
+                self.battle_summary = {"preset": self.battle.get("preset", ""),
+                                       "env": {}, "global": {}, "sides": {}}
 
         mode = policy_mode
         if mode == "auto":
@@ -83,14 +98,32 @@ class Simulation:
         self.tick = 0
         self.events: list[dict] = []
         self.seq = 0
+        # 智能体决策 trace（调试中心）：每次决策一条，含视野/决策/LLM 交换
+        self.traces: list[dict] = []
+        self._trace_max = 3000
+        self._trace_seq = 0
         self.run_dir = (Path(run_dir) if run_dir
                         else Path("runs") / time.strftime("run-%Y%m%d-%H%M%S"))
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._jsonl_path = self.run_dir / "events.jsonl"
         self._pending_lines: list[str] = []  # 每 tick 批量落盘，避免逐事件开关文件
         self._intents: dict[str, str] = dict(getattr(mod, "DEFAULT_INTENTS", {}))
+        # 导演部的开局意图覆盖（将台作业室设定各参演方初始任务后持久化）
+        if intent_overrides:
+            self._intents.update({
+                s: v for s, v in intent_overrides.items()
+                if s in self.factions and v and v.strip()})
+        # 导演部对子智能体的角色配置覆盖（性格/指挥风格/行为参数）
+        if role_overrides:
+            for pos_id, cfg in role_overrides.items():
+                p = self.registry.get(pos_id)
+                if p:
+                    p.config.update(cfg)
         if default_intents:
             self._inject_default_intents()
+        # 导演部导调剧本：按 tick 自动触发的情况序列（"模拟各种情况"的批量入口）
+        self.director_script: list[dict] = []
+        self.script_index = 0
 
     # ---- 事件流 ----
     def _emit(self, type_: str, **kw) -> dict:
@@ -115,12 +148,82 @@ class Simulation:
         for side, text in self._intents.items():
             self.inject_intent(side, text)
 
+    # ---- 导演部情况注入 ----
+    def director_message(self, side: str, recipient: str, kind: str,
+                         subject: str, body: str, sender: str | None = None,
+                         priority: int = 0) -> bool:
+        """将台导演部：在推演中向指定参演方角色注入任意情况。
+
+        这是"模拟各种情况"的入口——上级新任务、战场异动、情报通报、
+        天气/局势巨变等，都以一条电文的形式即刻送入对应角色的信箱，
+        交由该子智能体在下一轮决策中消化。
+        """
+        if side not in self.camps:
+            return False
+        sender = sender or f"{side}:hq"
+        if self.registry.get(sender) is None or self.registry.get(recipient) is None \
+                or self.registry.get(recipient).side != side:
+            return False
+        try:
+            k = MsgKind(kind) if isinstance(kind, str) else MsgKind.INTENT
+        except ValueError:
+            k = MsgKind.INTENT
+        msg = Message.create(self.tick, sender, recipient, k,
+                             subject or "导演部情况通报", body or "",
+                             {}, max(0, min(2, int(priority))))
+        try:
+            ok = self.camps[side].bus.send(msg)
+        except ValueError:
+            return False
+        self._emit("msg", camp=side, sender=msg.sender, recipient=msg.recipient,
+                   kind=msg.kind.value, subject=msg.subject[:90],
+                   body=msg.body[:220], priority=msg.priority, director=True)
+        return ok
+
+    # ---- 导演部导调剧本 ----
+    def set_director_script(self, script: list[dict] | None) -> None:
+        """导演部预置一批'导调情况'：到指定 tick 自动注入对应子智能体。"""
+        arr: list[dict] = []
+        for s in (script or []):
+            if not isinstance(s, dict):
+                continue
+            try:
+                arr.append({
+                    "tick": max(0, int(s.get("tick", 0))),
+                    "side": str(s.get("side", "")),
+                    "recipient": str(s.get("recipient", "")),
+                    "kind": str(s.get("kind", "intent")),
+                    "subject": str(s.get("subject", ""))[:60],
+                    "body": str(s.get("body", ""))[:600],
+                })
+            except (TypeError, ValueError):
+                continue
+        self.director_script = sorted(arr, key=lambda x: x["tick"])
+        self.script_index = 0
+
+    def _step_director_script(self) -> None:
+        idx = self.script_index
+        while idx < len(self.director_script):
+            s = self.director_script[idx]
+            if s["tick"] > self.tick:
+                break
+            if self.director_message(
+                    s["side"], s["recipient"], s["kind"], s["subject"], s["body"]):
+                self._emit("dirscript", camp=s["side"], recipient=s["recipient"],
+                           tick_at=s["tick"], kind=s["kind"],
+                           subject=s["subject"], body=s["body"][:180])
+            else:
+                self._emit("dirscript_failed", camp=s["side"], recipient=s["recipient"])
+            idx += 1
+        self.script_index = idx
+
     # ---- 主循环 ----
     def run_tick(self) -> None:
         self.tick += 1
         llm_client.reset_budget()
         self._reinforce()
         self._deliver()
+        self._step_director_script()
         self._decide()
         self._engine()
         self._recon()
@@ -147,26 +250,103 @@ class Simulation:
                 if not agent.should_wake(self.tick):
                     continue
                 view = SituationView(agent, camp, self.registry, self.world, self.tick)
+                llm_client.reset_capture()
+                decision = None
+                err = None
+                fallback = False
                 try:
                     decision = agent.decide(view)
                     agent.consume_inbox(view)
                 except Exception as exc:  # noqa: BLE001
+                    err = str(exc)
                     if not isinstance(self.policy, LLMPolicy):
-                        self._emit("error", camp=side, pos=pos.id, error=str(exc)[:200])
+                        self._emit("error", camp=side, pos=pos.id, error=err[:200])
                         continue
-                    # LLM 失败（网络/解析/预算）→ 本次决策降级为规则策略
-                    self._emit("llm_fallback", camp=side, pos=pos.id, error=str(exc)[:160])
+                    # LLM 失败（网络/解析/预算）→ 默认降级为规则策略；
+                    # 关闭容错（fallback_enabled=0）则失败即记录并跳过本拍，便于暴露问题
+                    self._emit("llm_fallback", camp=side, pos=pos.id, error=err[:160])
+                    if not settings.fallback_enabled:
+                        self._emit("error", camp=side, pos=pos.id,
+                                   error=("LLM 失败且已关闭容错降级: " + err)[:200])
+                        continue
+                    fallback = True
                     try:
                         decision = self._rule_fallback.decide(agent, view)
                         agent.consume_inbox(view)
                     except Exception as exc2:  # noqa: BLE001
-                        self._emit("error", camp=side, pos=pos.id, error=str(exc2)[:200])
+                        err = str(exc2)
+                        self._emit("error", camp=side, pos=pos.id, error=err[:200])
                         continue
                 agent.last_active = self.tick
                 agent.last_thought = decision.thoughts
                 self._emit("agent", camp=side, pos=pos.id,
                            thoughts=decision.thoughts[:120])
+                self._trace(side, pos, agent, view, decision,
+                            llm_client.drain_capture(), err, fallback)
                 self._apply_decision(side, camp, pos, decision)
+
+    def _trace(self, side: str, pos: Position, agent: Agent, view: SituationView,
+               decision, llm_calls: list[dict], err: str | None,
+               fallback: bool) -> None:
+        """记录一次智能体决策的完整可观测快照（调试中心数据源）。"""
+        self._trace_seq += 1
+        t = {
+            "seq": self._trace_seq, "tick": self.tick, "side": side,
+            "pos": pos.id, "title": pos.title, "archetype": pos.archetype,
+            "policy": "rule" if fallback else self.policy_mode,
+            "fallback": fallback, "error": err,
+            "structured": bool(any(c.get("tool_calls") for c in llm_calls)),
+            "thoughts": (decision.thoughts or "")[:200],
+            "view": {
+                "inbox": len(view.position.parent or agent.inbox) if False else len(agent.inbox),
+                "own_units": len(view.own_units),
+                "intel": len(view.intel),
+                "children": len(view.children),
+            },
+            "messages": [],
+            "actions": [],
+            "llm": llm_calls,
+            "budget": {"used": len(llm_calls),
+                       "max": settings.max_llm_calls_per_tick},
+        }
+        for md in (decision.messages or []):
+            t["messages"].append({
+                "to": str(md.get("to", "")), "kind": str(md.get("kind", "")),
+                "subject": str(md.get("subject", ""))[:80],
+                "body": str(md.get("body", ""))[:200],
+            })
+        for ad in (decision.world_actions or []):
+            t["actions"].append({"kind": ad.kind, "unit": ad.unit,
+                                 "target": list(ad.target or [])})
+        self.traces.append(t)
+        if len(self.traces) > self._trace_max:
+            del self.traces[: len(self.traces) - self._trace_max]
+
+    def agent_snapshot(self, pos_id: str | None = None) -> dict:
+        """调试中心：各子智能体的实时内部状态（任务/记忆/信箱/局部状态）。"""
+        out: dict[str, dict] = {}
+        for side in self.factions:
+            camp = self.camps[side]
+            for p in self.registry.agents(side):
+                if pos_id and p.id != pos_id:
+                    continue
+                a = camp.agents[p.id]
+                out[p.id] = {
+                    "pos": p.id, "side": side, "title": p.title,
+                    "archetype": p.archetype, "virtual": p.virtual,
+                    "policy": self.policy_mode,
+                    "wake": a.should_wake(self.tick),
+                    "inbox": [{"kind": m.kind.value, "sender": m.sender,
+                               "subject": m.subject, "body": m.body[:160]}
+                              for m in a.inbox],
+                    "tasks": [{"desc": t.desc, "status": t.status,
+                               "created": t.created} for t in a.tasks],
+                    "memory": list(a.memory),
+                    "state": dict(a.state),
+                    "last_active": a.last_active,
+                    "last_thought": a.last_thought,
+                }
+        return out
 
     def _apply_decision(self, side: str, camp: Camp, pos: Position,
                         decision) -> None:
@@ -385,6 +565,9 @@ class Simulation:
             "w": self.world.w, "h": self.world.h,
             "map": ["".join(row) for row in self.world.grid],
             "weather": self.world.weather,
+            "battle": self.battle_summary,
+            "side_mod": {s: {k: round(v, 2) for k, v in m.items()}
+                         for s, m in self.world.side_mod.items()},
             "depots": [dict(d) for d in self.world.depots],
             "objectives": [{"name": o["name"], "x": o["x"], "y": o["y"],
                             "value": o.get("value", 1), "controller": o.get("controller")}

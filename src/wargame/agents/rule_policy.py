@@ -236,11 +236,20 @@ def reg_cmd(agent: Agent, view: SituationView) -> AgentDecision:
         elif m.sender.startswith("unit:") and m.data.get("event"):
             ev, up = m.data["event"], view.position.parent
             strength = m.data.get("strength", 100)
-            # 职位级参数覆盖全局调参——保守的指挥官会提早告警收缩
-            threshold = int(view.position.config.get("withdraw_threshold")
-                            or view.tuning.get("withdraw_threshold", 40))
+            # 职位级参数覆盖全局调参——保守的指挥官会提早告警收缩；
+            # 进攻倾向 aggression_scale 越高，等效撤退阈值越低（越敢打）
+            agg = max(0.2, float(view.tuning.get("aggression_scale", 1.0)))
+            threshold = int((view.position.config.get("withdraw_threshold")
+                             or view.tuning.get("withdraw_threshold", 40)) / agg)
             if ev == "contact":
-                if (strength < threshold and not agent.state.get("esc_sent")):
+                # 告警延迟 escalation_delay：连败多拍才向上告警，避免一受挫就呼叫
+                delay = max(0, int(view.tuning.get("escalation_delay", 0)))
+                if strength < threshold:
+                    agent.state["low_t"] = agent.state.get("low_t", 0) + 1
+                else:
+                    agent.state["low_t"] = 0
+                if (strength < threshold and not agent.state.get("esc_sent")
+                        and agent.state.get("low_t", 0) > delay):
                     agent.state["esc_sent"] = True
                     if up:
                         msgs.append(_m(up, MsgKind.ESCALATION, "战况告警",

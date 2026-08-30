@@ -20,6 +20,14 @@ from ..engine.world import World
 
 SCENARIO_NAME = "诺曼底登陆 1944 · OVERLORD"
 
+CODENAME = "霸王 OVERLORD"
+ERA = "二战 · 1944 年 6 月"
+THEATER = "诺曼底滩头 · 英吉利海峡"
+SCALE = "集团军群级 · 美英加三军对德军 · 25 个单位"
+SCENARIO_DESC = ("史上最大的两栖战役。美、英加两军分西、东滩头上陆，"
+                 "德军依托大西洋壁垒坚守卡昂—瑟堡轴线并伺机装甲反突击。"
+                 "风暴、滩头火力、装甲预备队与铁路机动，构成多方大纵深矛盾的空前图景。")
+
 FACTIONS = [
     {"id": "usa", "name": "美军"},
     {"id": "uk", "name": "英加军"},

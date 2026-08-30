@@ -3,13 +3,19 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sandtable"
-version = "0.1.0"
-description = "Sandtable 作战沙盘：多方隔离的多智能体军队指挥链推演系统（任务式指挥/命令下行/反馈上行/AI 场景导入）"
+name = "wargenerals"
+version = "0.9.0"
+description = "将台 WARGENERALS · 作战沙盘：多方隔离的多智能体军队指挥链推演系统（任务式指挥/命令下行/反馈上行/AI 场景导入）"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Sandtable Contributors"}]
-keywords = ["wargame", "multi-agent", "llm", "simulation", "command-and-control", "normandy"]
+authors = [{name = "Wargenerals Contributors"}]
+keywords = [
+    "wargame", "wargaming", "multi-agent", "llm", "simulation",
+    "command-and-control", "c2", "mission-command", "military-ai",
+    "normandy", "battle-simulation", "organizational-friction",
+    "fog-of-war", "command-chain", "ai-agents", "fastapi",
+    "wargenerals", "将台", "兵棋推演", "多智能体",
+]
 dependencies = [
     "pydantic>=2.5",
     "fastapi>=0.115",

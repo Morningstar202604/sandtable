@@ -1,4 +1,6 @@
-# Sandtable
+# 将台 WARGENERALS
+
+> **マルチエージェント兵棋シミュレーション**——軍隊の指揮連鎖が摩擦と遅延の中でどう指揮・協同・報告するかを再現。Python + FastAPI + プラガブル LLM エージェント。
 
 <p align="center">
   <strong>多智能体による軍隊組織の指揮連鎖シミュレーション——部隊の戦い方ではなく、組織がどう指揮し・協同し・報告するかを再現する。</strong>
@@ -14,9 +16,16 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-yellow">
 </p>
 
-## Sandtable について
+<p align="center">
+  <strong>トピック：</strong>
+  <code>ウォーゲーム</code> · <code>マルチエージェント</code> · <code>llm</code> · <code>指揮統制</code> ·
+  <code>軍事シミュレーション</code> · <code>ai-agents</code> · <code>任務型指揮</code> ·
+  <code>組織摩擦</code> · <code>ノルマンディー</code> · <code>fastapi</code>
+</p>
 
-ほとんどのウォーゲームは戦場をシミュレーションします。Sandtable が模拟するのは
+## 将台 WARGENERALS について
+
+ほとんどのウォーゲームは戦場をシミュレーションします。将台 WARGENERALS が模拟するのは
 戦場の背後にある**指揮組織そのもの**です。上級司令部の意図がどう階層ごとに命令へ
 分解され、下位部隊がどう自律的に実行・報告し、同級部隊がどう連携し、情報が
 遅延と喪失の中でどう歪むか。地図は背景にすぎず、**組織こそがシミュレーションの主体**です。
@@ -127,7 +136,8 @@ src/wargame/
 └── web/              FastAPI(REST+SSE) + ダーク指揮センター UI（ビルド不要）
 ```
 
-> パッケージ名は `wargame`、プロダクト名は Sandtable——歴史的経緯により、
+> Python パッケージ名は `wargame`（import パス）、配布パッケージ名は `wargenerals`、
+> ブランド名は **将台 WARGENERALS**——リポジトリ構成は歴史的構造を維持しており、
 > 今後のメジャーバージョンで統一する予定です。
 
 ## テスト
@@ -147,4 +157,4 @@ Issue・PR を歓迎します。提出前に `python -m pytest -q` を通すこ�
 
 ## ライセンス
 
-[MIT](LICENSE) © 2026 Sandtable Contributors
+[MIT](LICENSE) © 2026 Wargenerals Contributors

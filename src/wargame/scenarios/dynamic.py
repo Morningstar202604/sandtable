@@ -121,6 +121,11 @@ def make_dynamic_scenario(spec: dict):
 
     return SimpleNamespace(
         SCENARIO_NAME=str(spec.get("name") or "AI 导入场景"),
+        CODENAME="AI 生成想定",
+        ERA="通用 · AI 生成",
+        THEATER="生成地图 · %d×%d" % (W, H),
+        SCALE="%d 方 · %d 单位" % (len(factions), sum(len(f.get("units") or []) for f in factions)),
+        SCENARIO_DESC=str(spec.get("desc") or "由 AI 从提供的资料自动生成的战役想定。"),
         CAMP_NAMES=camp_names,
         FACTIONS=[{"id": f["id"], "name": f["name"]} for f in factions],
         DEFAULT_INTENTS={f["id"]: f["intent"] or "完成既定战役任务。" for f in factions},

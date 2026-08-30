@@ -9,12 +9,66 @@ from __future__ import annotations
 
 import json
 
+from ..config import settings
 from ..llm import LLMClient
 from ..org import ROLE_PROMPTS, SIDE_NAME
 from ..schemas import AgentDecision, MsgKind, WorldAction
 from .base import Agent, SituationView
 
 _VALID_KINDS = {k.value for k in MsgKind}
+
+# 原生工具调用 schema：模型以 decide 工具的一次调用产出完整决策。
+# 类型化动作 + 枚举 + 坐标数组，全部走 OpenAI 兼容 tools 标准（框架同款机制）。
+DECIDE_TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "decide",
+        "description": "输出本 tick 的决策：一句话思考、要向本阵营职位发送的电文、要对本部部队下达的动作。"
+                       "无新情况时 messages 与 world_actions 都返回空数组。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "thoughts": {"type": "string",
+                             "description": "一句话决策理由"},
+                "messages": {
+                    "type": "array",
+                    "description": "要向本阵营职位发送的电文，可为空数组",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "to": {"type": "string",
+                                   "description": "收件人职位 id，必须是本阵营内职位"},
+                            "kind": {"type": "string",
+                                     "enum": sorted(_VALID_KINDS),
+                                     "description": "消息类型"},
+                            "subject": {"type": "string"},
+                            "body": {"type": "string"},
+                            "priority": {"type": "integer",
+                                         "description": "0特急/1加急/2例行，默认1"},
+                        },
+                        "required": ["to", "kind"],
+                    },
+                },
+                "world_actions": {
+                    "type": "array",
+                    "description": "要对本部部队下达的世界动作，可为空数组",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string",
+                                     "enum": ["move", "attack", "entrench", "hold"]},
+                            "unit": {"type": "string", "description": "本部部队单位 id"},
+                            "target": {"type": "array", "items": {"type": "integer"},
+                                       "description": "目标网格坐标 [x,y]"},
+                        },
+                        "required": ["kind", "unit"],
+                    },
+                },
+            },
+            "required": ["thoughts", "messages", "world_actions"],
+        },
+    },
+}]
 
 
 class PolicyError(Exception):
@@ -28,6 +82,28 @@ class LLMPolicy:
     def decide(self, agent: Agent, view: SituationView) -> AgentDecision:
         system = self._system(agent, view)
         user = self._situation(agent, view)
+        # 主路径：原生工具调用（结构化输出）——各大 agent 框架的标准做法，
+        # 由模型按 schema 产出类型化动作，取代手搓 JSON 提示词。
+        if getattr(settings, "llm_use_tools", True):
+            try:
+                r = self.client.chat_tools(
+                    system, user, DECIDE_TOOLS,
+                    tool_choice={"type": "function", "function": {"name": "decide"}})
+                if r["tool_calls"]:
+                    obj = r["tool_calls"][0]["arguments"]
+                    if isinstance(obj, dict) and obj:
+                        return self._parse(obj, agent, view)
+                # 无工具调用但返回文本（端点忽略 tools）：走 JSON 提示词解析
+                if r["text"].strip():
+                    return self._parse(self.client.extract_json(r["text"]),
+                                       agent, view)
+            except Exception:  # noqa: BLE001  端点不支持 tools → 自动回退 JSON 路径
+                pass
+        # 回退：JSON 提示词路径（保留原有行为）
+        return self._fallback(system, user, agent, view)
+
+    def _fallback(self, system: str, user: str, agent: Agent,
+                  view: SituationView) -> AgentDecision:
         try:
             obj = self.client.extract_json(self.client.chat(system, user))
         except Exception:

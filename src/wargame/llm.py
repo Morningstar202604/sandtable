@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import httpx
 
@@ -23,7 +24,21 @@ class LLMClient:
         self.model = settings.llm_model
         self.temperature = 0.3
         self.max_tokens = 1600  # 推理型模型思维链也计入输出预算，给足余量
+        self.top_p = settings.llm_top_p
+        self.frequency_penalty = settings.llm_frequency_penalty
+        self.presence_penalty = settings.llm_presence_penalty
         self._calls = 0
+        # 决策级调用捕获：记录窗口内各次 LLM 请求的 prompt/响应/延迟，供调试中心回放。
+        # 仿真单线程顺序决策，reset_capture()→chat()→drain_capture() 之间恰为单个智能体的一次决策。
+        self._capture: list[dict] = []
+
+    def reset_capture(self) -> None:
+        self._capture = []
+
+    def drain_capture(self) -> list[dict]:
+        """取出并清空本次窗口内的全部 LLM 调用（若发生了）。"""
+        c, self._capture = self._capture, []
+        return c
 
     @property
     def available(self) -> bool:
@@ -31,7 +46,9 @@ class LLMClient:
 
     def reconfigure(self, api_key: str | None = None, base_url: str | None = None,
                     model: str | None = None, temperature: float | None = None,
-                    max_tokens: int | None = None) -> None:
+                    max_tokens: int | None = None, top_p: float | None = None,
+                    frequency_penalty: float | None = None,
+                    presence_penalty: float | None = None) -> None:
         """运行时改配置（Web 设置面板用）。原地更新，持有本客户端引用的策略无需重建。"""
         if api_key:
             self.api_key = api_key
@@ -43,6 +60,12 @@ class LLMClient:
             self.temperature = max(0.0, min(1.0, float(temperature)))
         if max_tokens is not None:
             self.max_tokens = max(100, min(4000, int(max_tokens)))
+        if top_p is not None:
+            self.top_p = max(0.0, min(1.0, float(top_p)))
+        if frequency_penalty is not None:
+            self.frequency_penalty = max(-2.0, min(2.0, float(frequency_penalty)))
+        if presence_penalty is not None:
+            self.presence_penalty = max(-2.0, min(2.0, float(presence_penalty)))
 
     def reset_budget(self) -> None:
         self._calls = 0
@@ -62,19 +85,99 @@ class LLMClient:
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
         last_err: Exception | None = None
-        for _ in range(2):
+        t0 = time.perf_counter()
+        for _ in range(max(1, settings.llm_retry)):
             try:
                 resp = httpx.post(
                     f"{self.base_url}/chat/completions",
-                    json=payload, headers=headers, timeout=90,
+                    json=payload, headers=headers, timeout=settings.llm_timeout,
                 )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"] or ""
+                content = resp.json()["choices"][0]["message"]["content"] or ""
+                self._capture.append({
+                    "system": system, "user": user, "response": content,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000),
+                    "ok": True,
+                })
+                return content
             except Exception as e:  # noqa: BLE001  网络类异常统一重试一次后上抛
                 last_err = e
+        self._capture.append({
+            "system": system, "user": user, "response": "",
+            "latency_ms": round((time.perf_counter() - t0) * 1000),
+            "ok": False, "error": str(last_err)[:200],
+        })
+        raise RuntimeError(f"LLM 请求失败: {last_err}")
+
+    def chat_tools(self, system: str, user: str, tools: list[dict],
+                   tool_choice: dict | str | None = None) -> dict:
+        """结构化输出：让模型以原生工具调用(tools)产出决策。
+
+        返回 {"text": 文本, "tool_calls": [{"name","arguments(dict)"}], "ok": bool}。
+        走 OpenAI 兼容 tools 参数（OpenAI/DeepSeek/通义/Ollama 等端点均支持），
+        这是各大 agent 框架内部的标准结构化输出路径——借标准机制，不再手搓 JSON。
+        失败时抛 RuntimeError，由上层降级为规则策略或 JSON 提示词路径。
+        """
+        if not self.available:
+            raise RuntimeError("LLM 未配置")
+        if self._calls >= settings.max_llm_calls_per_tick:
+            raise RuntimeError("LLM 调用预算耗尽")
+        self._calls += 1
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+            "tools": tools,
+        }
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        last_err: Exception | None = None
+        t0 = time.perf_counter()
+        for _ in range(max(1, settings.llm_retry)):
+            try:
+                resp = httpx.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload, headers=headers, timeout=settings.llm_timeout,
+                )
+                resp.raise_for_status()
+                msg = resp.json()["choices"][0]["message"]
+                calls = []
+                for tc in msg.get("tool_calls") or []:
+                    try:
+                        args = json.loads(tc["function"].get("arguments") or "{}")
+                    except (TypeError, ValueError):
+                        args = {}
+                    calls.append({"name": tc["function"]["name"], "arguments": args})
+                rec = {
+                    "system": system, "user": user,
+                    "response": msg.get("content") or "",
+                    "tool_calls": calls,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000),
+                    "ok": True,
+                }
+                self._capture.append(rec)
+                return {"text": rec["response"], "tool_calls": calls, "ok": True}
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+        self._capture.append({
+            "system": system, "user": user, "response": "",
+            "tool_calls": [], "latency_ms": round((time.perf_counter() - t0) * 1000),
+            "ok": False, "error": str(last_err)[:200],
+        })
         raise RuntimeError(f"LLM 请求失败: {last_err}")
 
     @staticmethod

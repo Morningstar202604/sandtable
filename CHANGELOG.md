@@ -6,6 +6,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-30
+
+### Changed
+- **Rebrand to 将台 WARGENERALS** — new logo emblem (将台 = raised command pavilion:
+  eave + star + crossed command batons) with inline SVG and matching favicon; product
+  name updated across the app shell, FastAPI title and README set (en/zh-CN/ja-JP).
+- **Visual retone — 参谋部 · 深邃军绿 × 牛皮纸台账** — background/panel palette
+  shifted from navy-blue to deep olive military green; brass ledger marking retained;
+  introduced kraft-paper archive tone (`--paper` token family); info/faction blue kept
+  as the semantic "blue force / intelligence" color.
+- Distribution name `sandtable` → `wargenerals` (import package stays `wargame`).
+
 ## [0.1.0] - 2026-08-29
 
 Initial open-source release.

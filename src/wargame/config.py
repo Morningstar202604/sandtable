@@ -37,6 +37,19 @@ class Settings:
         self.seed: int = int(os.getenv("WARGAME_SEED", "7"))
         # 每 tick 允许的 LLM 调用上限，超出时该次决策退化为规则策略，防止 token 失控
         self.max_llm_calls_per_tick: int = int(os.getenv("WARGAME_MAX_LLM_CALLS", "40"))
+        # 结构化输出开关：用原生工具调用(tools)替代手搓 JSON 提示词；
+        # 关掉(WARGAME_LLM_TOOLS=0)则回退为 JSON 提示词路径。失败时自动回退，无需干预。
+        self.llm_use_tools: bool = os.getenv("WARGAME_LLM_TOOLS", "1") != "0"
+        # 单次 LLM 请求失败重试次数（网络类异常自动重试）
+        self.llm_retry: int = int(os.getenv("WARGAME_LLM_RETRY", "2"))
+        # 单次 LLM 请求超时秒数
+        self.llm_timeout: float = float(os.getenv("WARGAME_LLM_TIMEOUT", "90"))
+        # 采样参数：top_p 核采样、频率惩罚、存在惩罚（部分端点不支持则自动忽略）
+        self.llm_top_p: float = float(os.getenv("WARGAME_LLM_TOP_P", "1"))
+        self.llm_frequency_penalty: float = float(os.getenv("WARGAME_LLM_FREQ_PENALTY", "0"))
+        self.llm_presence_penalty: float = float(os.getenv("WARGAME_LLM_PRESENCE_PENALTY", "0"))
+        # LLM 失败是否自动降级为规则策略（关掉则失败即报错停在本拍，便于暴露问题）
+        self.fallback_enabled: bool = os.getenv("WARGAME_LLM_FALLBACK", "1") != "0"
 
     @property
     def llm_available(self) -> bool:

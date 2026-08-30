@@ -3,13 +3,214 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sandtable · 指挥协同推演</title>
-<link rel="stylesheet" href="/css/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230d140e'/%3E%3Ccircle cx='32' cy='32' r='30' fill='none' stroke='%23dfb26a' stroke-width='4'/%3E%3Cpolygon points='32,20 35.5,29.2 45.2,29.7 37.6,35.4 40.3,44.7 32,39.4 23.7,44.7 26.4,35.4 18.8,29.7 28.5,29.2' fill='%23dfb26a'/%3E%3C/svg%3E">
+<title>将台 WARGENERALS · 导演部作业区</title>
+<link rel="stylesheet" href="css/app.css?v=19">
 </head>
 <body>
 
+<!-- ============================================================
+ 〇、将台导演部作业区（配置工作台）
+     定位：多智能体 AI 演武。给引擎配好、选定想定后，AI 被拆成
+     军长/参谋/师团主官等一条条子智能体，在各自指挥链上自主推动战役。
+     本工作台是"路口"式入口 + 四个独立配置视图（想定库 / 兵力编成 /
+     导演部设定），全局引擎与参数在「设置」中；运行在「指挥台」。
+============================================================ -->
+<div id="studio" class="studio">
+  <div class="atmo" aria-hidden="true">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+
+  <header class="studio-top">
+    <div class="brand">
+      <span class="logo"><svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#0d140e"/><circle cx="32" cy="32" r="30" fill="none" stroke="var(--gold)" stroke-width="3"/><circle cx="32" cy="32" r="24" fill="none" stroke="var(--gold)" stroke-width="1" opacity=".5" stroke-dasharray="3 4"/><path d="M18 28 L32 17 L46 28" fill="none" stroke="var(--gold)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="14.5" r="1.7" fill="var(--gold)"/><polygon points="32,29 34.2,34.9 40.6,35.2 35.6,39.2 37.3,45.3 32,41.8 26.7,45.3 28.4,39.2 23.4,35.2 29.8,34.9" fill="var(--gold)"/><path d="M24 47 L40 58 M40 47 L24 58" stroke="var(--gold)" stroke-width="2.2" opacity=".6" stroke-linecap="round"/></svg></span>
+      <span>
+        <span class="b-name">将台<em>WARGENERALS</em></span>
+        <div class="b-sub">多智能体 AI 战役推演 · 导演部作业区</div>
+      </span>
+    </div>
+    <div class="st-actions">
+      <span id="h-llm-badge" class="badge">—</span>
+      <button id="h-go-settings" class="btn">⚙ 引擎与连接</button>
+    </div>
+  </header>
+
+  <div class="shell-body">
+    <nav class="side-nav" id="side-nav" aria-label="导演部导航">
+      <button class="nav-item active" data-view="home">◈ 开始</button>
+      <button class="nav-item" data-view="scenario">▦ 想定库</button>
+      <button class="nav-item" data-view="roster">▥ 兵力编成</button>
+      <button class="nav-item" data-view="director">◎ 导演部设定</button>
+      <button class="nav-item" data-view="debug">⚛ 智能体调试</button>
+    </nav>
+
+    <main class="shell-views">
+
+      <!-- 开始（路口） -->
+      <section id="view-home" class="view active">
+        <div class="home">
+          <div class="home-hero">
+            <div class="home-kicker">WARGENERALS DIRECTORATE · 将台导演部</div>
+            <h1 class="home-title">把一场大型战役，交给一群 <span class="grad">AI 将领</span></h1>
+            <p class="home-sub">这是一场由多条 <a class="plink">AI 子智能体</a> 驱动的将台演武——军长、参谋、师团主官在各自的指挥链上拟定方案、下达命令、组织协同、向上报告，自主推动战役走向；导演部掌控全局，随时注入新情况。本页只做入口，具体配置在各工作台中完成。</p>
+          </div>
+          <div class="home-grid">
+            <div class="home-card status-card">
+              <div class="hc-head">
+                <span>当前推演配置</span>
+                <button id="btn-home-settings" class="btn sm ghost" title="推演设置：运行与智能体/战斗参数">⚙ 设置</button>
+              </div>
+              <div class="hc-scenario" id="h-scenario">—</div>
+              <div class="hc-meta">
+                <span><b id="h-policy">—</b> 决策引擎</span>
+                <span><b id="h-seed">—</b> 随机种子</span>
+              </div>
+              <div class="hc-line" id="h-llm-line">…</div>
+            </div>
+            <div class="home-card action-card">
+              <div class="hc-head">开始一场推演</div>
+              <button id="btn-home-launch" class="btn launch-hero">▶ 开始推演 · 进入指挥台</button>
+              <div class="hc-actions">
+                <button id="btn-home-scenario" class="btn">▦ 想定库 · 选用/新建</button>
+                <button id="btn-home-battle" class="btn">▥ 战役定制 · 环境/双方实力</button>
+                <button id="btn-home-roster" class="btn">▧ 兵力编成 · 配置子智能体</button>
+                <button id="btn-home-director" class="btn">◎ 导演部设定 · 开局意图</button>
+              </div>
+              <div class="hc-note" id="h-home-note"></div>
+            </div>
+          </div>
+          <div class="home-flow" aria-label="作业流程">
+            <button class="hf" data-go="scenario"><b>1</b><span>想定库<small class="hf-s">选用 / 生成想定</small></span></button>
+            <i></i>
+            <button class="hf" data-go="roster"><b>2</b><span>兵力编成<small class="hf-s">编排 AI 将领</small></span></button>
+            <i></i>
+            <button class="hf" data-go="director"><b>3</b><span>导演部设定<small class="hf-s">注入开局意图</small></span></button>
+            <i></i>
+            <button class="hf hot" data-go="launch"><b>4</b><span>启动推演<small class="hf-s">进入指挥台</small></span></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 想定库 -->
+      <section id="view-scenario" class="view">
+        <div class="view-head">
+          <div class="step-title">想定库</div>
+          <p class="step-sub">选定一场大型战役或训练想定；也可以直接把任意战役资料粘贴进来，交给 AI 生成新想定。输入框会随内容自动增高。</p>
+        </div>
+        <div class="ai-import">
+          <button class="ai-import-head" id="ai-import-toggle" aria-expanded="true" type="button">
+            <span class="ai-chev" id="ai-import-chev">▾</span>
+            <span class="ai-import-title">AI 生成新想定 <span class="hint">直接输入 · 可粘贴长资料</span></span>
+          </button>
+          <div class="ai-import-body" id="ai-import-body">
+            <textarea id="st-ai" class="grow" rows="2" placeholder="例：1944年6月6日盟军在诺曼底登陆，德军第7集团军依托大西洋壁垒防御，第21装甲师驻卡昂……"></textarea>
+            <div class="ai-import-row">
+              <button id="btn-ai-import" class="btn">交给 AI 生成</button>
+              <span class="dim" id="st-ai-status">需先在设置中配置 LLM</span>
+            </div>
+          </div>
+        </div>
+        <div class="view-sub-head"><span>预设想定</span><span class="hint" id="sc-count"></span></div>
+        <div class="sc-cards" id="st-scenarios"></div>
+      </section>
+
+      <!-- 兵力编成 -->
+      <section id="view-roster" class="view">
+        <div class="view-head">
+          <div class="step-title">兵力编成 · 智能体编排 <span class="tt">每个职位都是一条 AI 子智能体</span></div>
+          <p class="step-sub">按参演方展开指挥链。改写文字即覆盖其历史性格，拖动滑杆调行为参数；「恢复」可回到想定原始性格。改动在启动推演时提交生效。</p>
+        </div>
+        <div class="st-tabs" id="st-tabs"></div>
+        <div id="st-roster" class="roster"></div>
+        <div class="roster-foot">
+          <div class="roster-tools">
+            <button id="btn-expand-roster" class="btn sm" title="展开所有职位卡的详细配置">⤡ 全部展开</button>
+            <button id="btn-collapse-roster" class="btn sm" title="只显示指挥链顶层">⤢ 全部折叠</button>
+            <button id="btn-reset-roster" class="btn sm">↺ 恢复全部历史性格</button>
+          </div>
+          <span class="st-hint" id="st-roster-hint"></span>
+        </div>
+      </section>
+
+      <!-- 导演部设定 -->
+      <section id="view-director" class="view">
+        <div class="view-head">
+          <div class="step-title">导演部设定</div>
+          <p class="step-sub">为各参演方注入开局作战意图（它们收到的第一份上级任务）。通信摩擦、引擎与战斗参数请在「设置」中调节。</p>
+        </div>
+        <div class="intent-block" id="st-intents"></div>
+        <div class="script-overview">
+          <button class="sv-head" id="script-overview-toggle" aria-expanded="true" type="button">
+            <span class="ai-chev" id="script-overview-chev">▾</span>
+            <span>导调剧本 <span class="hint" id="script-overview-count"></span></span>
+          </button>
+          <div class="script-overview-body" id="script-overview-body">
+            <div id="script-overview" class="script-list"></div>
+            <p class="dim">剧本在指挥台右侧的「导演部导调」面板中编排与保存，到指定拍自动触发。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 智能体调试 -->
+      <section id="view-debug" class="view">
+        <div class="view-head">
+          <div class="step-title">智能体调试中心 <span class="tt">实时观测每条 AI 子智能体的内部状态</span></div>
+          <p class="step-sub">左侧选择子智能体，右侧分页查看其内部状态、信箱、任务、记忆与每次决策过程；若使用 LLM 策略，可回放原始请求与响应。数据随推演实时刷新。</p>
+        </div>
+        <div class="debug-toolbar">
+          <input type="text" id="debug-search" class="dbg-input" placeholder="搜索职位 / 代号…">
+          <select id="debug-side" class="dbg-input"><option value="">全部阵营</option></select>
+          <span class="dim" id="debug-count"></span>
+          <button class="btn mini" id="debug-export">导出复盘 JSON</button>
+        </div>
+        <div class="debug-container">
+          <div class="agent-list" id="agent-list-items"></div>
+          <div class="agent-detail">
+            <div class="dbg-empty" id="dbg-empty">← 选择左侧子智能体查看详情</div>
+            <div class="dbg-detail hidden" id="dbg-detail">
+              <div class="dbg-head">
+                <div>
+                  <div class="dbg-title" id="dbg-title">—</div>
+                  <div class="dbg-meta" id="dbg-meta"></div>
+                </div>
+                <div class="dbg-live" id="dbg-live">● 实时</div>
+              </div>
+              <div class="dbg-tabs" id="dbg-tabs">
+                <button class="dbg-tab active" data-tab="state">内部状态</button>
+                <button class="dbg-tab" data-tab="inbox">信箱</button>
+                <button class="dbg-tab" data-tab="tasks">任务</button>
+                <button class="dbg-tab" data-tab="memory">记忆</button>
+                <button class="dbg-tab" data-tab="decisions">决策历史</button>
+                <button class="dbg-tab" data-tab="llm">LLM 交互</button>
+              </div>
+              <div class="dbg-content" id="dbg-content"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="studio-foot">
+    将台（WARGENERALS）· 多智能体 AI 推演 · 导演部导控 — “模拟的不是战场，是战场背后的指挥机器”
+  </footer>
+</div>
+
+<!-- ============================================================
+ 一、演练指挥台（推演中的实时视图）
+============================================================ -->
+<div id="deck" class="deck hidden">
 <header class="topbar">
-  <div class="brand"><span class="logo">◈</span>Sandtable<span class="sub">指挥协同推演系统</span></div>
+  <div class="brand">
+    <span class="logo"><svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#0d140e"/><circle cx="32" cy="32" r="30" fill="none" stroke="var(--gold)" stroke-width="3"/><circle cx="32" cy="32" r="24" fill="none" stroke="var(--gold)" stroke-width="1" opacity=".5" stroke-dasharray="3 4"/><path d="M18 28 L32 17 L46 28" fill="none" stroke="var(--gold)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="14.5" r="1.7" fill="var(--gold)"/><polygon points="32,29 34.2,34.9 40.6,35.2 35.6,39.2 37.3,45.3 32,41.8 26.7,45.3 28.4,39.2 23.4,35.2 29.8,34.9" fill="var(--gold)"/><path d="M24 47 L40 58 M40 47 L24 58" stroke="var(--gold)" stroke-width="2.2" opacity=".6" stroke-linecap="round"/></svg></span>
+    <span>
+      <span class="b-name">将台 · WARGENERALS</span>
+      <div class="b-sub" id="deck-scenario">指挥台</div>
+    </span>
+  </div>
   <div class="clock"><span class="pulse" id="run-pulse"></span><span class="t-label">T</span><span id="tick">000</span><span class="scenario" id="scenario"></span></div>
   <div class="controls">
     <button id="btn-start" class="btn primary">▶ 开始</button>
@@ -25,8 +226,10 @@
   </div>
   <div class="spacer"></div>
   <div class="mode">
-    <span id="mode-badge" class="badge">—</span>
-    <button id="btn-home" class="btn">☰ 主界面</button>
+    <button id="mode-badge" class="badge clickable" type="button" title="引擎与连接 · 点击配置决策引擎 / LLM 端点">—</button>
+    <button id="btn-director" class="btn primary-alt">◈ 导演部导调</button>
+    <button id="btn-studio" class="btn">☰ 作业区</button>
+    <button id="btn-battle" class="btn">▦ 战役定制</button>
     <button id="btn-settings" class="btn">⚙ 设置</button>
   </div>
 </header>
@@ -34,13 +237,12 @@
 <main>
   <aside class="panel left">
     <div class="tabs" id="tabs"></div>
-    <div id="org-wrap" class="org-wrap">
-      <svg id="org-edges" width="100%" height="100%"></svg>
-      <div id="org-nodes"></div>
+    <div class="org-tree-wrap">
+      <div id="org-tree" class="org-tree"></div>
     </div>
     <div class="intent-box">
-      <div class="panel-title">注入上级意图 <span class="hint" id="intent-target">→ 红军军长</span></div>
-      <textarea id="intent-text" rows="3"
+      <div class="panel-title">向下级注入意图 <span class="hint" id="intent-target">→ 参演方主官</span></div>
+      <textarea id="intent-text" class="grow" rows="3"
         placeholder="例：集中主力从北桥渡河，夺占河东城镇，得手后向北发展进攻"></textarea>
       <button id="btn-intent" class="btn primary full">下达意图</button>
     </div>
@@ -48,21 +250,24 @@
 
   <section class="panel center">
     <div class="center-head">
-      <div class="panel-title">态势图</div>
+      <div class="panel-title">战况态势图<span class="hint" id="map-hint">拖拽平移 · 滚轮缩放</span></div>
       <div class="view-switch" id="view-switch"></div>
     </div>
     <div class="map-wrap">
       <canvas id="map"></canvas>
       <div class="map-ctrl">
-        <button id="zoom-in" class="btn icon" title="放大">＋</button>
-        <button id="zoom-out" class="btn icon" title="缩小">－</button>
-        <button id="zoom-reset" class="btn icon" title="复位视图">⌂</button>
+        <div class="zoom-chip">
+          <button id="zoom-in" title="放大">＋</button>
+          <div class="sep"></div>
+          <button id="zoom-out" title="缩小">－</button>
+          <div class="sep"></div>
+          <button id="zoom-reset" title="复位">⟲</button>
+        </div>
         <span id="zoom-label" class="zoom-label">100%</span>
       </div>
     </div>
     <div class="legend">
-      <span><i class="sw" style="background:#e5484d"></i>红军</span>
-      <span><i class="sw" style="background:#4c8dff"></i>蓝军</span>
+      <span class="lg" id="legend-sides"></span>
       <span><i class="sw ghost"></i>敌情轮廓（延迟/误差）</span>
       <span class="dim">步 步兵 · 装 装甲 · 炮 炮兵 · 侦 侦察 · ▬ 兵力条</span>
     </div>
@@ -71,8 +276,8 @@
   <aside class="panel right">
     <div class="center-head">
       <div class="rtabs">
-        <button class="rtab active" data-rtab="feed">消息流</button>
-        <button class="rtab" data-rtab="metrics">复盘指标</button>
+        <button class="rtab active" data-rtab="feed">战况电文</button>
+        <button class="rtab" data-rtab="metrics">导演部讲评</button>
       </div>
       <select id="feed-filter" class="btn select">
         <option value="">全部类型</option>
@@ -84,80 +289,218 @@
         <option value="plan">方案</option>
         <option value="intel">情报</option>
         <option value="escalation">告警</option>
+        <option value="dirscript">导演部剧本</option>
       </select>
     </div>
     <div id="feed" class="feed"></div>
     <div id="metrics" class="metrics hidden"></div>
   </aside>
 </main>
+</div>
 
-<!-- 主界面大厅 -->
-<div id="lobby" class="mask">
-  <div class="lobby">
+<!-- ============================================================
+ 二、导演部导调面板（单条注入 + 导调剧本）
+============================================================ -->
+<div id="director-mask" class="mask hidden">
+  <div class="modal director-modal">
     <div class="modal-head">
-      <span class="panel-title">CommandSim · 推演大厅</span>
-      <span class="set-note">选择战役进入推演，或把资料交给 AI 生成新场景</span>
+      <span class="m-icon">◈</span>
+      <div>
+        <div class="m-title">导演部 · 导调情况</div>
+        <div class="m-sub">在推演中随时改变局势，或预置一场"各种情况"</div>
+      </div>
+      <button id="director-close" class="btn icon x">✕</button>
     </div>
-    <div id="lobby-cards" class="lobby-cards"></div>
-    <div class="set-group">
-      <div class="set-title">AI 场景导入（把战役资料粘进来，LLM 自动分类阵营/兵力/目标）</div>
-      <textarea id="ai-text" rows="5"
-        placeholder="例：1944年6月6日，盟军在诺曼底登陆……德军第7集团军依托大西洋壁垒防御，第21装甲师驻卡昂……"></textarea>
-      <button id="btn-ai-import" class="btn primary full">交给 AI 识别并生成场景</button>
-      <div class="set-note" id="ai-status">需要已在设置中配置 LLM。生成后自动加入上方场景列表。</div>
+    <div class="modal-body">
+      <p class="set-note">在推演中临时改变局势：新任务、敌军集结、天气骤变、情报通报等。既可<b>立即注入</b>指定子智能体，也可<b>写入导调剧本</b>延后到指定拍自动触发。</p>
+
+      <div class="set-group">
+        <div class="set-title">送达目标</div>
+        <div class="dir-grid">
+          <label>参演方 <select id="dir-side"></select></label>
+          <label>目标角色（子智能体） <select id="dir-recipient"></select></label>
+        </div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">情况类型</div>
+        <select id="dir-kind">
+          <option value="intent">意图调整（上级新任务）</option>
+          <option value="order">命令</option>
+          <option value="intel">情报通报</option>
+          <option value="sitrep">态势通报</option>
+          <option value="escalation">紧急告警</option>
+          <option value="ack">批复</option>
+        </select>
+      </div>
+      <div class="set-group">
+        <div class="set-title">情况内容</div>
+        <textarea id="dir-subject" class="grow" rows="1" placeholder="简短主题，如：北侧发现敌装甲集群"></textarea>
+        <textarea id="dir-body" class="grow" rows="4" placeholder="详细描述要注入的情况。该子智能体将在下一轮据此做出反应。"></textarea>
+      </div>
+      <div class="set-group">
+        <div class="set-title">注入方式</div>
+        <label class="inline-lab">
+          <select id="dir-mode">
+            <option value="now">立即注入</option>
+            <option value="script">写入导调剧本（延后触发）</option>
+          </select>
+          <span id="dir-tick-wrap" class="hidden">触发拍（当前 <b id="dir-cur-tick">0</b> 之后第 <input id="dir-after" type="number" min="1" value="3" /> 拍）</span>
+        </label>
+      </div>
+
+      <div class="set-group" id="script-box">
+        <div class="set-title">导调剧本 <span id="script-count" class="hint"></span></div>
+        <div id="script-list" class="script-list"></div>
+        <div class="set-note">剧本中的情况到指定拍自动注入对应子智能体，用于预置一串"各种情况"。</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="set-note" id="dir-status"></span>
+      <button id="dir-save-script" class="btn">保存剧本</button>
+      <button id="director-send" class="btn primary">注入 / 入剧</button>
     </div>
   </div>
 </div>
 
-<!-- 设置面板 -->
-<div id="settings-mask" class="mask hidden">
+<!-- 引擎与连接：决策引擎 + LLM 端点 + 智能体运行时（只在"连接"这件事上做文章） -->
+<div id="engine-mask" class="mask hidden">
   <div class="modal">
     <div class="modal-head">
-      <span class="panel-title">推演设置</span>
-      <button id="btn-close-settings" class="btn icon">✕</button>
+      <span class="m-icon" style="background:var(--blue-soft)">⚡</span>
+      <div>
+        <div class="m-title">引擎与连接</div>
+        <div class="m-sub">决策引擎 · LLM 端点 · 智能体运行时</div>
+      </div>
+      <button id="btn-close-engine" class="btn icon x">✕</button>
     </div>
     <div class="modal-body">
+      <div class="conn-card">
+        <div class="conn-status">
+          <span class="conn-dot" id="conn-dot"></span>
+          <div class="conn-txt">
+            <div class="conn-state" id="conn-state">检测中…</div>
+            <div class="conn-meta" id="conn-meta"></div>
+          </div>
+          <button id="btn-llm-test" class="btn sm">↻ 测试连接</button>
+        </div>
+        <div class="conn-result hidden" id="conn-result"></div>
+      </div>
       <div class="set-group">
-        <div class="set-title">运行（保存后重置推演生效）</div>
-        <label>推演场景 <select id="set-scenario"></select></label>
+        <div class="set-title">决策引擎（保存后重置推演生效）</div>
         <label>决策引擎
-          <select id="set-policy">
+          <select id="engine-policy">
             <option value="auto">自动（配置 Key 则用 LLM）</option>
             <option value="rule">规则策略（离线确定性）</option>
             <option value="llm">LLM 策略</option>
           </select>
         </label>
+        <div class="set-note">规则策略完全离线、结果可复现；配置 LLM Key 后，全部 AI 子智能体由大模型驱动。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">LLM 端点连接</div>
+        <label>提供商预设
+          <select id="eng-provider">
+            <option value="">自定义（手动填写）</option>
+            <option value="openai">OpenAI</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="qwen">通义千问</option>
+            <option value="zhipu">智谱 GLM</option>
+            <option value="moonshot">Moonshot Kimi</option>
+            <option value="ollama">Ollama 本地</option>
+          </select>
+        </label>
+        <label>Base URL <input id="eng-llm-url" type="text" placeholder="https://api.openai.com/v1" /></label>
+        <label>模型 <input id="eng-llm-model" type="text" placeholder="gpt-4o-mini" /></label>
+        <label>API Key <input id="eng-llm-key" type="password" placeholder="留空保持不变" /></label>
+        <div class="set-note">兼容 OpenAI / DeepSeek / 通义 / 智谱 / Kimi / Ollama 等任何 OpenAI 兼容端点。选预设自动填端点与模型，可再手动微调。Key 只写入不回显，先填再「测试连接」。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">智能体运行时（实时）</div>
+        <div class="set-grid" id="set-llmrun"></div>
+        <div class="set-agent-row">
+          <label>失败重试 <input id="eng-llm-retry" type="number" min="1" max="5" step="1" title="单次 LLM 请求失败重试次数" /></label>
+          <label>超时(秒) <input id="eng-llm-timeout" type="number" min="5" max="300" step="5" title="单次 LLM 请求超时" /></label>
+          <label class="chk"><input id="eng-use-tools" type="checkbox" /> 结构化输出（工具调用）</label>
+        </div>
+        <div class="set-note">决策温度/Token 上限/每拍预算控制 AI 子智能体的思考成本；重试与超时保证恶劣网络下推演不中断。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">生成参数（实时）</div>
+        <div class="set-agent-row">
+          <label>Top-P <input id="eng-top-p" type="number" min="0" max="1" step="0.05" title="核采样阈值" /></label>
+          <label>频率惩罚 <input id="eng-freq" type="number" min="-2" max="2" step="0.1" title="抑制重复用词" /></label>
+          <label>存在惩罚 <input id="eng-presence" type="number" min="-2" max="2" step="0.1" title="鼓励讨论新话题" /></label>
+        </div>
+        <div class="set-note">细调子智能体语言的随机性与重复度：Top-P 越低越保守，频率惩罚越高越不易车轱辘话。多数 OpenAI 兼容端点支持，不支持时自动忽略。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">容错策略</div>
+        <label class="chk"><input id="eng-fallback" type="checkbox" /> LLM 失败时自动降级为规则策略</label>
+        <div class="set-note">开启：单次 LLM 调用失败自动用规则策略顶上，推演不中断；关闭：失败即记录错误并跳过本拍，便于暴露模型与端点问题。</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="set-note" id="engine-status"></span>
+      <button id="btn-save-engine" class="btn primary">保存并重置推演</button>
+    </div>
+  </div>
+</div>
+
+<!-- 推演设置：运行 + 智能体行为 + 战斗/空军/后勤参数（只管"推演本身"，不碰连接） -->
+<div id="settings-mask" class="mask hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="m-icon" style="background:var(--gold-soft)">▤</span>
+      <div>
+        <div class="m-title">推演设置</div>
+        <div class="m-sub">推演运行 · 智能体行为 · 战斗/士气/机动/空军/后勤/侦察参数</div>
+      </div>
+      <button id="btn-close-settings" class="btn icon x">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="set-group">
+        <div class="set-title">运行（保存后重置推演生效）</div>
+        <label>推演场景 <select id="set-scenario"></select></label>
         <label>随机种子 <input id="set-seed" type="number" step="1" /></label>
+        <label>天气
+          <select id="set-weather"><option value="auto">沿用想定</option></select>
+        </label>
         <label>推演速度 ×<span id="set-speed-v">2</span>
           <input id="set-speed" type="range" min="0.5" max="8" step="0.5" /></label>
+      </div>
+      <div class="set-group">
+        <div class="set-title">智能体行为（实时）</div>
+        <div class="set-grid" id="set-agent"></div>
+        <div class="set-note">AI 子智能体的上报节奏、告警阈值、进攻倾向与通信摩擦：命令迟到、报告丢失，上级基于不完整信息决策。</div>
       </div>
       <div class="set-group">
         <div class="set-title">战斗参数（实时）</div>
         <div class="set-grid" id="set-battle"></div>
       </div>
       <div class="set-group">
-        <div class="set-title">后勤与侦察（实时）</div>
+        <div class="set-title">士气与战损（实时）</div>
+        <div class="set-grid" id="set-morale"></div>
+        <div class="set-note">残兵战力衰减、被围攻时更易崩溃、追击让败退部队雪上加霜——把"伤亡数字"变成"组织崩溃"。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">机动与射程（实时）</div>
+        <div class="set-grid" id="set-move"></div>
+        <div class="set-note">道路/铁路是机动力走廊；炮兵射程决定火力覆盖纵深。改动即时影响下一拍机动与炮击。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">空军遮断（实时）</div>
+        <div class="set-grid" id="set-air"></div>
+        <div class="set-note">打击已机动敌行军纵队；恶劣天气会大幅削弱。设为 0 即关闭空军。</div>
+      </div>
+      <div class="set-group">
+        <div class="set-title">后勤（实时）</div>
         <div class="set-grid" id="set-logi"></div>
+        <div class="set-note">补给决定能打多久：补给不足时部队战力随之下降；补给半径决定补给站覆盖范围。</div>
       </div>
       <div class="set-group">
-        <div class="set-title">机动与节奏（实时）</div>
-        <div class="set-grid" id="set-tempo"></div>
-      </div>
-      <div class="set-group">
-        <div class="set-title">组织摩擦（实时）</div>
-        <div class="set-grid" id="set-friction"></div>
-        <div class="set-note">模拟通信摩擦：命令迟到、报告丢失，上级基于不完整的信息决策——这正是要观察的组织现象。</div>
-      </div>
-      <div class="set-group">
-        <div class="set-title">LLM 运行参数（实时）</div>
-        <div class="set-grid" id="set-llmrun"></div>
-      </div>
-      <div class="set-group">
-        <div class="set-title">LLM 决策引擎</div>
-        <label>Base URL <input id="set-llm-url" type="text" placeholder="https://api.openai.com/v1" /></label>
-        <label>模型 <input id="set-llm-model" type="text" placeholder="gpt-4o-mini" /></label>
-        <label>API Key <input id="set-llm-key" type="password" placeholder="留空保持不变" /></label>
-        <div class="set-note">兼容 OpenAI / DeepSeek / 通义 / Ollama 等任何 OpenAI 兼容端点。Key 只写入不回显。</div>
+        <div class="set-title">情报侦察（实时）</div>
+        <div class="set-grid" id="set-recon"></div>
+        <div class="set-note">侦察半径决定敌方踪迹何时暴露；敌情误差模拟"看得到但不完全准"的信息迷雾。</div>
       </div>
     </div>
     <div class="modal-foot">
@@ -168,6 +511,75 @@
   </div>
 </div>
 
-<script src="/js/app.js"></script>
+<!-- 战役定制中心：参照十余场经典战役，把"一场战役像什么样"拆成通用参数，傻瓜式调节 -->
+<div id="battle-mask" class="mask hidden">
+  <div class="modal battle-modal">
+    <div class="modal-head">
+      <span class="m-icon" style="background:var(--red-soft)">⚔</span>
+      <div>
+        <div class="m-title">战役定制中心</div>
+        <div class="m-sub">从十余场经典战役提炼的通用参数 · 天气/地形/烈度/后勤/士气/空军/双方实力</div>
+      </div>
+      <button id="btn-close-battle" class="btn icon x">✕</button>
+    </div>
+    <div class="modal-body battle-body">
+      <p class="set-note">挑一场参考战役一键套用，再随手调几下参数——就能拼出你自己想要的战役。所有改动<b>「应用并启动」后生效</b>，无需记任何字段。</p>
+
+      <div class="bt-sec">
+        <div class="bt-sec-head">① 参考战役（预置）<span class="hint" id="bt-preset-count"></span></div>
+        <div class="bt-presets" id="bt-presets"></div>
+      </div>
+
+      <div class="bt-sec">
+        <div class="bt-sec-head">② 环境层 · 战场天气与地形 <span class="bt-clear" id="bt-reset-env">重设</span></div>
+        <div class="bt-env-grid" id="bt-env">
+          <div class="bt-env-weather">
+            <span class="bt-lab">天气脚本</span>
+            <select id="bt-weather" class="btn select"></select>
+            <div class="bt-env-desc" id="bt-weather-desc"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bt-sec">
+        <div class="bt-sec-head">③ 全局层 · 战役烈度与作战法则 <span class="bt-clear" id="bt-reset-global">重设</span></div>
+        <div id="bt-global"></div>
+      </div>
+
+      <div class="bt-sec">
+        <div class="bt-sec-head">④ 双方实力 · 拆解到人/武器/装备 <span class="bt-clear" id="bt-reset-sides">平衡化</span></div>
+        <div class="bt-side-legend">向某一方拖动滑杆 = 塑造这支军队的性格。</div>
+        <div id="bt-sides"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="set-note" id="bt-status"></span>
+      <button id="btn-battle-clear" class="btn">还原想定</button>
+      <button id="btn-battle-apply-launch" class="btn primary">应用并启动推演 ▶</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/app.js?v=14"></script>
+<script>
+/* 纵深增强：滑杆进度填充（纯增量，不触碰主逻辑） */
+(function () {
+  function paintRange(r) {
+    if (!r || r.dataset.painted) return;
+    r.dataset.painted = "1";
+    var min = parseFloat(r.min || 0), max = parseFloat(r.max || 100);
+    var v = (parseFloat(r.value) - min) / (max - min) * 100;
+    r.style.setProperty("--p", Math.max(0, Math.min(100, v)).toFixed(1) + "%");
+    r.addEventListener("input", function () {
+      var n = (parseFloat(r.value) - min) / (max - min) * 100;
+      r.style.setProperty("--p", Math.max(0, Math.min(100, n)).toFixed(1) + "%");
+    });
+  }
+  function paintAll() { document.querySelectorAll('input[type="range"]').forEach(paintRange); }
+  paintAll();
+  // 设置面板会动态生成滑杆
+  new MutationObserver(paintAll).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body>
 </html>

@@ -1,4 +1,6 @@
-# Sandtable
+# WARGENERALS (将台)
+
+> **Multi-agent wargame simulating military command chains** — how organizations command, coordinate, and report under friction. Not just how units fight, but how the *command machine* works. Built with Python, FastAPI, and pluggable LLM agents.
 
 <p align="center">
   <strong>Multi-agent wargame for studying how military organizations command, coordinate and report — not just how units fight.</strong>
@@ -15,9 +17,16 @@
   <img alt="LLM" src="https://img.shields.io/badge/LLM-optional%20(rule%20mode%20works%20offline)-orange">
 </p>
 
-## Why Sandtable
+<p align="center">
+  <strong>Topics:</strong>
+  <code>wargame</code> · <code>multi-agent</code> · <code>llm</code> · <code>command-and-control</code> ·
+  <code>military-simulation</code> · <code>ai-agents</code> · <code>mission-command</code> ·
+  <code>organizational-friction</code> · <code>normandy</code> · <code>fastapi</code>
+</p>
 
-Most wargame projects simulate the battlefield. Sandtable simulates the **command
+## Why WARGENERALS
+
+Most wargame projects simulate the battlefield. WARGENERALS simulates the **command
 machine behind it**: how an intent from high command is decomposed layer by layer
 into orders, how subordinates execute and report back, how peers coordinate, and
 how information decays under latency and loss. The map is a backdrop; the
@@ -138,8 +147,9 @@ src/wargame/
 └── web/              FastAPI (REST+SSE) + dark command-center frontend (no build step)
 ```
 
-> Package name is `wargame`, product name is Sandtable — historical reasons; a
-> future major version may unify them.
+> Python package name is `wargame` (import path), distribution is `wargenerals`,
+> brand is **WARGENERALS (将台)** — repo skeleton keeps the historical layout; a
+> future major version may unify folder names.
 
 ## Testing
 
@@ -160,4 +170,4 @@ smoke tests for new mechanics/scenarios, write code comments in Chinese explaini
 
 ## License
 
-[MIT](LICENSE) © 2026 Sandtable Contributors
+[MIT](LICENSE) © 2026 Wargenerals Contributors

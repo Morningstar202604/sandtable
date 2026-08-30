@@ -10,6 +10,14 @@ from ..engine.world import World
 
 SCENARIO_NAME = "渡河攻坚 · RIVER CROSSING"
 
+CODENAME = "渡河攻坚"
+ERA = "现代 · 通用训练想定"
+THEATER = "河网地幅 · 东西两岸对峙"
+SCALE = "集团军级 · 两师对两师 · 14 个单位"
+SCENARIO_DESC = ("经典演武想定：河流把战场一分为二，两座桥是天然瓶颈。"
+                 "进攻方须组织渡场、协调火力、克服通信迟滞将主力送过河；"
+                 "防御方依托东岸要点与炮兵封锁渡场消耗来敌。组织协同与摩擦都在河上集中体现。")
+
 CAMP_NAMES = {"red": "红军", "blue": "蓝军"}
 
 DEFAULT_INTENTS = {
