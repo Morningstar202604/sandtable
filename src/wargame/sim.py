@@ -221,16 +221,23 @@ class Simulation:
     def run_tick(self) -> None:
         self.tick += 1
         llm_client.reset_budget()
+        # 同步电子战干扰到阵营通信摩擦（bus 层读取）
+        jamming = self.world.jamming()
+        for camp in self.camps.values():
+            camp.bus.friction["ew_jamming"] = jamming
         self._reinforce()
         self._deliver()
         self._step_director_script()
         self._decide()
+        self._tactical_decide()
         self._engine()
         self._recon()
         w = self.world.weather_at(self.tick)
         if w != self.world.weather:
             self.world.weather = w
             self._emit("weather", weather=w, name=WEATHER_CN.get(w, w))
+        if self.world.day_period(self.tick) != getattr(self.world, "period", "day"):
+            pass  # period 已在 _engine()._day_night() 内更新
         if self._pending_lines:
             with self._jsonl_path.open("a", encoding="utf-8") as f:
                 f.write("\n".join(self._pending_lines) + "\n")
@@ -388,6 +395,37 @@ class Simulation:
                            target=wa.target, pos=pos.id)
             else:
                 self._emit("action_rejected", camp=side, unit=wa.unit, pos=pos.id)
+
+    # ---- 战术Agent决策：一线分队的局部自主智能 ----
+    def _tactical_decide(self) -> None:
+        """战术Agent层：每个作战Unit绑定的轻量智能体做局部决策。
+
+        与司令部Agent不同：
+        - 感知是即时的（直接读 world 周边，不走消息总线）
+        - 行动是自主的（遇敌接战、受创后撤、就地防御，不等上级新命令）
+        - 上报是异步的（关键事件走 bus 上报，带通信延迟）
+        战术Agent的行动直接应用到 world，不经过越权校验（是自己的单位）。
+        """
+        for side in self.factions:
+            camp = self.camps[side]
+            # 战术Agent策略：随全局策略（llm/rule）联动，LLM 可用才启用 LLM 驱动
+            camp.tactical.policy_mode = "llm" if (self.policy_mode == "llm"
+                                                  and llm_client.available) else "rule"
+            camp.tactical.llm_client = llm_client if camp.tactical.policy_mode == "llm" else None
+            results = camp.tactical.decide_all(self.world, self.tick)
+            for unit_id, action in results:
+                unit = self.world.units.get(unit_id)
+                if not unit or not unit.alive:
+                    continue
+                if self.world.apply_action(unit, action):
+                    agent = camp.tactical.agents.get(unit_id)
+                    self._emit("tactical", camp=side, unit=unit_id,
+                               name=unit.name, kind=action.kind,
+                               target=action.target,
+                               state=agent.state if agent else "unknown")
+                else:
+                    self._emit("tactical_rejected", camp=side, unit=unit_id,
+                               kind=action.kind)
 
     # ---- 增援批次：按场景时刻表入场，编入指定指挥官麾下 ----
     def _reinforce(self) -> None:
@@ -565,6 +603,7 @@ class Simulation:
             "w": self.world.w, "h": self.world.h,
             "map": ["".join(row) for row in self.world.grid],
             "weather": self.world.weather,
+            "period": getattr(self.world, "period", "day"),
             "battle": self.battle_summary,
             "side_mod": {s: {k: round(v, 2) for k, v in m.items()}
                          for s, m in self.world.side_mod.items()},
@@ -574,7 +613,8 @@ class Simulation:
                            for o in self.world.objectives],
             "camps": {s: {"org": self._org_tree(s),
                           "units": self.world.side_units_view(s),
-                          "intel": camp.intel.view()}
+                          "intel": camp.intel.view(),
+                          "tactical": camp.tactical_snapshot()}
                       for s, camp in self.camps.items()},
             "seq": self.seq,
         }

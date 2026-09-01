@@ -83,4 +83,39 @@ def build_world() -> World:
     w.add_unit("blue-u-b2", "blue", "蓝军摩步第2团", "infantry", 14, 11)
     w.add_unit("blue-u-b3", "blue", "蓝军装甲第3团", "armor", 17, 7)
     w.add_unit("blue-u-b4", "blue", "蓝军装甲第4团", "armor", 19, 9)
+
+    # === v0.9.7 九大战场因素初始化 ===
+    # 指挥官标记：师属炮兵营指挥官（带指挥光环）
+    for uid in ["red-u-a1", "red-u-a2", "blue-u-a1", "blue-u-a2"]:
+        if uid in w.units:
+            w.units[uid].is_commander = True
+            w.units[uid].command_radius = 6
+            w.units[uid].leader_style = "balanced"
+            w.units[uid].leader_skill = 0.6
+    # 红军进攻方指挥官偏激进，蓝军防御方偏谨慎
+    w.units["red-u-a1"].leader_style = "aggressive"
+    w.units["red-u-a2"].leader_style = "aggressive"
+    w.units["blue-u-a1"].leader_style = "cautious"
+    w.units["blue-u-a2"].leader_style = "cautious"
+
+    # 初始经验：装甲团和步兵团为regular（有训练基础），侦察连为veteran
+    for uid in ["red-u-b3", "red-u-b4", "blue-u-b3", "blue-u-b4"]:
+        if uid in w.units:
+            w.units[uid].experience = 40
+            w.units[uid].exp_level = "regular"
+    for uid in ["red-u-r1", "blue-u-r1"]:
+        if uid in w.units:
+            w.units[uid].experience = 60
+            w.units[uid].exp_level = "veteran"
+            w.units[uid].camouflaged = True  # 侦察连默认伪装
+
+    # 防御方蓝军初始有工事构筑进度
+    for uid in ["blue-u-b1", "blue-u-b2"]:
+        if uid in w.units:
+            w.units[uid].entrench_progress = 2.0
+            w.units[uid].formation = "combat"
+
+    # 天气想定：开局晴，中期有雨
+    w.set_weather([(0, "clear"), (30, "overcast"), (50, "rain"), (80, "clear")])
+
     return w
