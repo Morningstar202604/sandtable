@@ -147,6 +147,29 @@ class TuningBody(BaseModel):
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None
     llm_budget: int | None = None
+    # === 战役特征增强（v6）===
+    daynight_enabled: float | None = None
+    night_recon: float | None = None
+    night_arty: float | None = None
+    night_melee: float | None = None
+    night_move: float | None = None
+    fatigue_enabled: float | None = None
+    fatigue_move: float | None = None
+    fatigue_combat: float | None = None
+    fatigue_rest: float | None = None
+    fatigue_penalty: float | None = None
+    morale_enabled: float | None = None
+    morale_shock: float | None = None
+    morale_break: float | None = None
+    morale_recover: float | None = None
+    reorg_strength: float | None = None
+    suppression_enabled: float | None = None
+    suppression_penalty: float | None = None
+    suppression_ticks: float | None = None
+    ew_jamming: float | None = None
+    flank_dir_bonus: float | None = None
+    tactical_withdraw_threshold: float | None = None
+    tactical_report_interval: int | None = None
 
 
 _TUNING_CLAMPS = {
@@ -164,6 +187,18 @@ _TUNING_CLAMPS = {
     "terrain_cost_scale": (0.3, 3.0),
     "aggression_scale": (0.2, 3.0), "escalation_delay": (0, 20),
     "memory_size": (5, 200),
+    # === 战役特征增强（v6）===
+    "daynight_enabled": (0, 1), "night_recon": (0.1, 2.0),
+    "night_arty": (0.1, 2.0), "night_melee": (0.1, 2.0), "night_move": (0.1, 2.0),
+    "fatigue_enabled": (0, 1), "fatigue_move": (0, 3.0),
+    "fatigue_combat": (0, 3.0), "fatigue_rest": (0, 1.5), "fatigue_penalty": (0, 0.01),
+    "morale_enabled": (0, 1), "morale_shock": (0.05, 1.0),
+    "morale_break": (0.05, 0.5), "morale_recover": (0, 0.2),
+    "reorg_strength": (0.1, 0.8),
+    "suppression_enabled": (0, 1), "suppression_penalty": (0, 0.8),
+    "suppression_ticks": (1, 8), "ew_jamming": (0, 0.6),
+    "flank_dir_bonus": (0, 0.8),
+    "tactical_withdraw_threshold": (5, 80), "tactical_report_interval": (2, 24),
 }
 
 
@@ -653,6 +688,24 @@ def create_app(policy: str = "auto", seed: int | None = None,
     def get_debug_agents(pos_id: str | None = None):
         """调试中心：各子智能体的实时内部状态快照（任务/记忆/信箱/局部状态）。"""
         return host.sim.agent_snapshot(pos_id)
+
+    @app.get("/api/debug/tactical")
+    def get_debug_tactical(side: str | None = None):
+        """调试中心：一线战术Agent的实时状态与最近决策。
+        每个作战Unit的局部感知、自主行动状态、上报记录均可观测。
+        """
+        sides = host.sim.factions if not side else [side]
+        out = {}
+        for s in sides:
+            if s not in host.sim.camps:
+                continue
+            camp = host.sim.camps[s]
+            out[s] = {
+                "name": host.sim.camp_names.get(s, s),
+                "agents": camp.tactical.snapshot(),
+                "recent": camp.tactical.recent_decisions(limit=60),
+            }
+        return out
 
     @app.get("/api/debug/traces")
     def get_debug_traces(since: int = 0, limit: int = 100, pos: str | None = None):

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230d140e'/%3E%3Ccircle cx='32' cy='32' r='30' fill='none' stroke='%23dfb26a' stroke-width='4'/%3E%3Cpolygon points='32,20 35.5,29.2 45.2,29.7 37.6,35.4 40.3,44.7 32,39.4 23.7,44.7 26.4,35.4 18.8,29.7 28.5,29.2' fill='%23dfb26a'/%3E%3C/svg%3E">
 <title>将台 WARGENERALS · 导演部作业区</title>
-<link rel="stylesheet" href="css/app.css?v=19">
+<link rel="stylesheet" href="css/app.css?v=29">
 </head>
 <body>
 
@@ -211,7 +211,9 @@
       <div class="b-sub" id="deck-scenario">指挥台</div>
     </span>
   </div>
-  <div class="clock"><span class="pulse" id="run-pulse"></span><span class="t-label">T</span><span id="tick">000</span><span class="scenario" id="scenario"></span></div>
+  <div class="clock"><span class="pulse" id="run-pulse"></span><span class="t-label">T</span><span id="tick">000</span><span class="scenario" id="scenario"></span><span class="period" id="deck-period" title="昼夜时段"></span><span class="weather" id="deck-weather" title="天气"></span>
+      <div class="day-bar" title="昼夜进度"><div class="day-bar-fill" id="day-bar-fill"></div><div class="day-bar-icon" id="day-bar-icon">☀</div></div>
+      <button class="sound-toggle" id="sound-toggle" title="战斗音效开关">🔊</button></div>
   <div class="controls">
     <button id="btn-start" class="btn primary">▶ 开始</button>
     <button id="btn-pause" class="btn">⏸ 暂停</button>
@@ -255,6 +257,31 @@
     </div>
     <div class="map-wrap">
       <canvas id="map"></canvas>
+      <div id="unit-detail" class="unit-detail hidden">
+        <div class="ud-head">
+          <span class="ud-name" id="ud-name">--</span>
+          <span class="ud-side" id="ud-side">--</span>
+          <button class="ud-close" onclick="document.getElementById('unit-detail').classList.add('hidden')">×</button>
+        </div>
+        <div class="ud-body">
+          <div class="ud-row"><span class="ud-label">类型</span><span id="ud-kind">--</span></div>
+          <div class="ud-row"><span class="ud-label">坐标</span><span id="ud-pos">--</span></div>
+          <div class="ud-row"><span class="ud-label">兵力</span><span id="ud-str">--</span></div>
+          <div class="ud-row"><span class="ud-label">补给</span><span id="ud-sup">--</span></div>
+          <div class="ud-row"><span class="ud-label">弹药</span><span id="ud-ammo">--</span></div>
+          <div class="ud-row"><span class="ud-label">燃料</span><span id="ud-fuel">--</span></div>
+          <div class="ud-row"><span class="ud-label">疲劳</span><span id="ud-fat">--</span></div>
+          <div class="ud-row"><span class="ud-label">士气</span><span id="ud-mor">--</span></div>
+          <div class="ud-row"><span class="ud-label">经验</span><span id="ud-exp">--</span></div>
+          <div class="ud-row"><span class="ud-label">工事</span><span id="ud-ent">--</span></div>
+          <div class="ud-row"><span class="ud-label">队形</span><span id="ud-form">--</span></div>
+          <div class="ud-row"><span class="ud-label">指挥</span><span id="ud-cmd">--</span></div>
+          <div class="ud-row"><span class="ud-label">补给线</span><span id="ud-sline">--</span></div>
+          <div class="ud-row"><span class="ud-label">状态</span><span id="ud-state">--</span></div>
+          <div class="ud-row"><span class="ud-label">战术</span><span id="ud-tac">--</span></div>
+        </div>
+      </div>
+      <div id="map-tooltip" class="map-tooltip hidden"></div>
       <div class="map-ctrl">
         <div class="zoom-chip">
           <button id="zoom-in" title="放大">＋</button>
@@ -267,9 +294,20 @@
       </div>
     </div>
     <div class="legend">
+      <div class="force-bar" id="force-bar" title="双方兵力对比">
+        <div class="force-red" id="force-red"></div>
+        <div class="force-blue" id="force-blue"></div>
+        <span class="force-label" id="force-label">—</span>
+      </div>
       <span class="lg" id="legend-sides"></span>
       <span><i class="sw ghost"></i>敌情轮廓（延迟/误差）</span>
-      <span class="dim">步 步兵 · 装 装甲 · 炮 炮兵 · 侦 侦察 · ▬ 兵力条</span>
+      <span class="tact-legend">
+        <i class="tact-dot" style="background:#ff4d4f"></i>接战
+        <i class="tact-dot" style="background:#4c8dff"></i>防御
+        <i class="tact-dot" style="background:#e2a336"></i>后撤
+        <i class="tact-dot" style="background:#46c98d"></i>推进
+      </span>
+      <span class="dim">步 步兵 · 装 装甲 · 炮 炮兵 · 侦 侦察 · ▬ 兵力条 · ● 分队自主状态</span>
     </div>
   </section>
 
@@ -277,6 +315,7 @@
     <div class="center-head">
       <div class="rtabs">
         <button class="rtab active" data-rtab="feed">战况电文</button>
+        <button class="rtab" data-rtab="tactical">一线分队</button>
         <button class="rtab" data-rtab="metrics">导演部讲评</button>
       </div>
       <select id="feed-filter" class="btn select">
@@ -293,6 +332,7 @@
       </select>
     </div>
     <div id="feed" class="feed"></div>
+    <div id="tactical" class="tactical hidden"></div>
     <div id="metrics" class="metrics hidden"></div>
   </aside>
 </main>
@@ -560,7 +600,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=14"></script>
+<script src="js/app.js?v=62"></script>
 <script>
 /* 纵深增强：滑杆进度填充（纯增量，不触碰主逻辑） */
 (function () {

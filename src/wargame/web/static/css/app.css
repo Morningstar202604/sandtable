@@ -1627,3 +1627,1014 @@ textarea.grow:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 
 .bt-side-body { padding: 8px 13px 10px; }
 .bt-side-legend { font-size: 11.5px; color: var(--txt-3); padding: 2px 12px; }
 .bt-dimmer { font-size: 12px; color: var(--txt-4); padding: 10px 12px; }
+/* ============================================================
+   v6 · 战术Agent层：一线分队局部自主智能
+   地图单位右上角状态点 + 事件流战术行动样式 + 图例
+   ============================================================ */
+.legend .tact-legend { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--txt-3); }
+.legend .tact-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 2px 0 6px; vertical-align: -1px; box-shadow: 0 0 4px currentColor; }
+/* 事件流中的战术自主行动：左侧绿色边框区分指挥命令与一线分队自主行为 */
+.fi.sys.tactical { border-left-color: rgba(70,201,141,.55); background: linear-gradient(90deg, rgba(70,201,141,.06), transparent 60%); }
+.fi.sys.tactical .fr { color: var(--txt-2); }
+.fi.sys.tactical .fr::before { content: "◆ "; color: #46c98d; }
+
+/* ============================================================
+   v7 · COP 通用作战图视觉重构
+   主题：现代军事指挥中心 · 深炭指挥舱 + 战术网格 + 玻璃拟态面板
+   覆盖旧"牛皮纸台账"风格，改为更硬朗的战场态势沙盘语言。
+   ============================================================ */
+:root {
+  /* —— 指挥舱深色基底（更深、更冷、更军事） —— */
+  --cop-bg-0: #05090d;
+  --cop-bg-1: #080e14;
+  --cop-bg-2: #0b131b;
+  --cop-panel: rgba(10, 17, 24, 0.82);
+  --cop-panel-solid: #0b131b;
+  --cop-line: rgba(110, 160, 190, 0.14);
+  --cop-line-strong: rgba(120, 190, 220, 0.3);
+  --cop-txt: #d7e4ec;
+  --cop-txt-2: #8ea6b4;
+  --cop-txt-3: #5d7483;
+  --cop-gold: #e0b06a;
+  --cop-cyan: #59d6e6;
+  --cop-green: #57d99b;
+  --cop-red: #ff5f5f;
+  --cop-grid: rgba(120, 190, 220, 0.05);
+}
+
+/* —— 全局基底：战术网格 + 扫描线 + 暗角 —— */
+body { background-color: var(--cop-bg-0); letter-spacing: 0.2px; }
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(var(--cop-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--cop-grid) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 38%, transparent 30%, rgba(0,0,0,0.5) 100%);
+}
+
+/* 把主内容层抬到网格之上（保留全屏固定定位） */
+.studio, .deck { position: fixed; inset: 0; z-index: 1; }
+
+/* —— 顶栏：半透明指挥舱条 + 底部扫描光 —— */
+.topbar {
+  background: linear-gradient(180deg, rgba(8,14,20,0.95), rgba(8,14,20,0.72));
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--cop-line-strong);
+  box-shadow: 0 1px 0 rgba(89,214,230,0.08), 0 10px 30px rgba(0,0,0,0.4);
+}
+.topbar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cop-cyan), transparent);
+  opacity: 0.5;
+}
+.brand .b-name { color: var(--cop-txt); letter-spacing: 2px; }
+.brand .b-name em { color: var(--cop-gold); }
+.brand .b-sub { color: var(--cop-txt-3); }
+
+/* 时钟/时间码 */
+.clock .t-label { color: var(--cop-cyan); }
+.clock #tick { color: var(--cop-txt); text-shadow: 0 0 12px rgba(89,214,230,0.4); font-weight: 600; }
+.clock .scenario { color: var(--cop-txt-3); border-left: 1px solid var(--cop-line); }
+/* 昼夜指示 */
+.clock .period {
+  font-size: 11px; font-weight: 700; letter-spacing: 1px;
+  padding: 1px 7px; border-radius: 4px; margin-left: 8px; line-height: 1.7;
+  border: 1px solid; background: rgba(0,0,0,0.3);
+}
+.clock .period-day   { color: #ffd98a; border-color: rgba(255,217,138,0.4); }
+.clock .period-dusk  { color: #ff9d45; border-color: rgba(255,157,69,0.45); }
+.clock .period-night { color: #9db8ff; border-color: rgba(157,184,255,0.4); }
+.clock .weather { color: var(--cop-cyan); margin-left: 6px; font-size: 12px; }
+
+/* —— 按钮：硬朗战术风 —— */
+.btn {
+  border-radius: 6px; border: 1px solid var(--cop-line-strong);
+  background: linear-gradient(180deg, rgba(20,30,40,0.9), rgba(12,18,26,0.9));
+  color: var(--cop-txt-2); letter-spacing: 0.5px;
+  transition: all 0.18s var(--ease-2);
+}
+.btn:hover { color: var(--cop-txt); border-color: rgba(89,214,230,0.5); box-shadow: 0 0 14px rgba(89,214,230,0.15); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn.primary {
+  background: linear-gradient(180deg, #1b6d5c, #12453c);
+  border-color: rgba(87,217,155,0.5); color: #eafff6;
+  box-shadow: 0 0 0 1px rgba(87,217,155,0.12) inset, 0 4px 18px rgba(27,109,92,0.35);
+}
+.btn.primary:hover { box-shadow: 0 0 0 1px rgba(87,217,155,0.2) inset, 0 0 18px rgba(87,217,155,0.4); }
+.btn.primary-alt {
+  background: linear-gradient(180deg, #2a4a63, #1a3144);
+  border-color: rgba(89,214,230,0.45); color: #dff6fb;
+}
+.btn.launch-hero {
+  font-size: 16px; padding: 14px 22px; border-radius: 8px;
+  background: linear-gradient(135deg, #155a4b, #0e3d34);
+  border-color: rgba(87,217,155,0.55); color: #eafff6;
+  box-shadow: 0 0 0 1px rgba(87,217,155,0.15) inset, 0 8px 30px rgba(18,80,64,0.5);
+}
+.btn.launch-hero:hover { box-shadow: 0 0 24px rgba(87,217,155,0.45); }
+
+/* —— 作业区侧导航 —— */
+.side-nav {
+  background: linear-gradient(180deg, rgba(8,14,20,0.85), rgba(6,11,16,0.9));
+  border-right: 1px solid var(--cop-line);
+}
+.nav-item { color: var(--cop-txt-3); letter-spacing: 1px; border-radius: 6px; transition: all 0.15s; }
+.nav-item:hover { color: var(--cop-txt); background: rgba(89,214,230,0.06); }
+.nav-item.active {
+  color: var(--cop-txt); background: linear-gradient(90deg, rgba(89,214,230,0.16), rgba(89,214,230,0.03));
+  border-left: 2px solid var(--cop-cyan); box-shadow: inset 0 0 20px rgba(89,214,230,0.05);
+}
+
+/* —— 弹窗：玻璃指挥舱 —— */
+.mask { background: rgba(3,7,10,0.6); backdrop-filter: blur(6px); }
+.modal {
+  border-radius: 12px; border: 1px solid var(--cop-line-strong);
+  background: linear-gradient(180deg, rgba(12,19,26,0.97), rgba(8,13,19,0.98));
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(89,214,230,0.06), 0 0 60px rgba(89,214,230,0.04);
+}
+.modal-head { border-bottom: 1px solid var(--cop-line); }
+.modal-head .m-title { color: var(--cop-txt); letter-spacing: 1px; }
+.modal-head .m-sub { color: var(--cop-txt-3); }
+.modal-foot { border-top: 1px solid var(--cop-line); }
+
+/* —— 面板容器 —— */
+#deck main .panel {
+  background: var(--cop-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--cop-line);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(120,190,220,0.06);
+}
+#deck main .panel::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(89,214,230,0.35), transparent);
+  opacity: 0.6;
+}
+.panel-title { color: var(--cop-txt); letter-spacing: 1.5px; font-weight: 600; }
+.panel-title .hint { color: var(--cop-txt-3); }
+
+/* —— 标签页（阵营/右栏） —— */
+.tab, .rtab, .st-tab {
+  color: var(--cop-txt-3); letter-spacing: 1px; border-radius: 6px 6px 0 0; transition: all 0.15s;
+}
+.tab:hover, .rtab:hover { color: var(--cop-txt); }
+.tab.active, .rtab.active, .st-tab.active { color: var(--cop-txt); border-bottom-color: var(--cop-cyan); }
+
+/* —— 地图容器：沙盘内衬 —— */
+.map-wrap {
+  flex: 1; min-height: 0;
+  border: 1px solid var(--cop-line-strong);
+  border-radius: 10px; overflow: hidden;
+  background: #05090d;
+  box-shadow: inset 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(89,214,230,0.05);
+}
+#map { display: block; width: 100%; height: 100%; }
+
+/* —— 图例：军事标注风 —— */
+.legend {
+  background: rgba(8,14,20,0.6); border: 1px solid var(--cop-line);
+  border-radius: 8px; color: var(--cop-txt-3); font-size: 11px; letter-spacing: 0.5px;
+}
+.legend .sw { border: 1px solid rgba(255,255,255,0.25); }
+.legend .dim { color: var(--cop-txt-3); }
+
+/* —— 电文流：电报风 —— */
+.feed {
+  background: transparent; border-left: 1px solid var(--cop-line);
+  padding: 6px 8px;
+}
+.fi {
+  border-radius: 7px; border: 1px solid transparent;
+  background: linear-gradient(180deg, rgba(18,28,38,0.5), rgba(12,19,27,0.3));
+  border-left: 3px solid var(--cop-txt-3);
+  transition: all 0.2s; margin-bottom: 6px;
+}
+.fi:hover { background: rgba(24,36,48,0.75); border-left-color: var(--cop-cyan); transform: translateX(-2px); }
+.fi .ft { color: var(--cop-txt-3); font-family: var(--mono); }
+.fi .fk { color: var(--cop-cyan); font-size: 10px; letter-spacing: 1px; border: 1px solid rgba(89,214,230,0.3); padding: 0 5px; border-radius: 3px; }
+.fi .fr { color: var(--cop-txt-2); }
+.fi .fi-sub { color: var(--cop-txt); font-weight: 500; }
+.fi .fi-body { color: var(--cop-txt-2); }
+.fi.k-intent   { border-left-color: var(--cop-gold); }
+.fi.k-order    { border-left-color: #ff9d45; }
+.fi.k-ack      { border-left-color: #57d99b; }
+.fi.k-sitrep   { border-left-color: #59d6e6; }
+.fi.k-escalation { border-left-color: #ff5f5f; }
+.fi.k-intel    { border-left-color: #9db8ff; }
+.fi.warn       { border-left-color: #ff5f5f; background: linear-gradient(90deg, rgba(255,95,95,0.12), transparent); }
+
+/* —— 指挥链 ORG 树 —— */
+.org-tree-wrap { background: transparent; }
+.ocard {
+  background: linear-gradient(180deg, rgba(18,28,38,0.7), rgba(12,19,27,0.6));
+  border: 1px solid var(--cop-line); border-radius: 8px; transition: all 0.15s;
+}
+.ocard:hover { border-color: var(--cop-line-strong); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+.oc-name { color: var(--cop-txt); letter-spacing: 0.5px; }
+.oc-u { color: var(--cop-txt-3); font-family: var(--mono); }
+.onode.flash .ocard { animation: cop-flash 1.1s ease; }
+@keyframes cop-flash { 0% { box-shadow: 0 0 0 2px rgba(89,214,230,0.6); } 100% { box-shadow: none; } }
+
+/* —— 指标卡 —— */
+.mcard {
+  border-radius: 10px; border: 1px solid var(--cop-line);
+  background: linear-gradient(180deg, rgba(18,28,38,0.7), rgba(10,16,22,0.6));
+}
+.mc-head { color: var(--cop-txt); letter-spacing: 1px; }
+.mc-grid b { color: var(--cop-txt); }
+
+/* —— 想定/角色/意图卡片 —— */
+.sc-card, .role-card, .intent-card {
+  border-radius: 10px; border: 1px solid var(--cop-line);
+  background: linear-gradient(180deg, rgba(16,25,34,0.85), rgba(9,14,20,0.9));
+  transition: all 0.2s;
+}
+.sc-card:hover, .role-card:hover, .intent-card:hover {
+  border-color: var(--cop-line-strong); transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(89,214,230,0.08);
+}
+.sc-card.active { border-color: var(--cop-cyan); box-shadow: 0 0 0 1px rgba(89,214,230,0.3), 0 8px 24px rgba(0,0,0,0.4); }
+.sc-cname, .rc-title { color: var(--cop-txt); letter-spacing: 1px; }
+
+/* —— 作战单位悬浮提示信息面板（指挥台右侧战术面板） —— */
+
+/* —— 一线分队面板 —— */
+.tactical { padding: 10px 8px; overflow-y: auto; height: 100%; }
+.tact-summary {
+  color: var(--cop-txt-3); font-size: 11px; letter-spacing: 1px;
+  padding: 6px 8px 10px; border-bottom: 1px dashed var(--cop-line); margin-bottom: 8px;
+}
+.tact-side { margin-bottom: 14px; }
+.tact-side-head {
+  display: flex; align-items: center; gap: 8px; padding: 4px 6px 8px;
+  color: var(--cop-txt-2); font-size: 12px; letter-spacing: 1px;
+}
+.tact-side-head i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px currentColor; }
+.tact-side-head b { color: var(--cop-txt); font-weight: 600; }
+.tact-side-head span { margin-left: auto; color: var(--cop-txt-3); font-size: 11px; }
+.tact-none { color: var(--cop-txt-3); font-size: 12px; padding: 8px; }
+.tact-card {
+  border-radius: 8px; border: 1px solid var(--cop-line);
+  background: linear-gradient(180deg, rgba(18,28,38,0.6), rgba(11,17,24,0.6));
+  padding: 7px 9px; margin-bottom: 6px; position: relative;
+  border-left: 3px solid #5d7483;
+}
+.tact-card.st-engaging    { border-left-color: #ff5f5f; background: linear-gradient(90deg, rgba(255,95,95,0.10), rgba(11,17,24,0.6)); }
+.tact-card.st-defending   { border-left-color: #59d6e6; }
+.tact-card.st-withdrawing { border-left-color: #ff9d45; }
+.tact-card.st-advancing   { border-left-color: #57d99b; }
+.tact-card.st-resting     { border-left-color: #9db8ff; }
+.tact-card.st-reorganizing{ border-left-color: #b98cff; }
+.tact-card.st-destroyed   { opacity: 0.45; }
+.tact-card-top { display: flex; align-items: center; gap: 6px; }
+.tact-name { color: var(--cop-txt); font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.tact-st {
+  margin-left: auto; font-size: 10px; letter-spacing: 1px; padding: 1px 7px;
+  border-radius: 3px; border: 1px solid currentColor; color: var(--cop-txt-2);
+}
+.tact-card.st-engaging .tact-st { color: #ff5f5f; }
+.tact-card.st-defending .tact-st { color: #59d6e6; }
+.tact-card.st-withdrawing .tact-st { color: #ff9d45; }
+.tact-card.st-advancing .tact-st { color: #57d99b; }
+.tact-bar {
+  height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px;
+  margin: 5px 0 4px; overflow: hidden;
+}
+.tact-bar i { display: block; height: 100%; background: linear-gradient(90deg, #57d99b, #59d6e6); border-radius: 2px; }
+.tact-card.st-engaging .tact-bar i { background: linear-gradient(90deg, #ff5f5f, #ff9d45); }
+.tact-meta { color: var(--cop-txt-3); font-size: 10.5px; font-family: var(--mono); }
+.tact-dec {
+  color: var(--cop-cyan); font-size: 10px; font-family: var(--mono);
+  margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* —— 缩放控制 —— */
+.zoom-chip { background: rgba(8,14,20,0.8); border: 1px solid var(--cop-line); border-radius: 8px; }
+.zoom-chip button { color: var(--cop-txt-2); }
+.zoom-chip button:hover { color: var(--cop-txt); }
+
+/* —— 导演部导调 —— */
+.script-item { border: 1px solid var(--cop-line); border-radius: 8px; background: rgba(12,19,26,0.6); }
+.script-item .s-tick { color: var(--cop-cyan); font-family: var(--mono); }
+
+/* —— 下拉/输入 —— */
+.select, .input, .textarea {
+  background: rgba(10,16,22,0.9); border: 1px solid var(--cop-line); border-radius: 6px;
+  color: var(--cop-txt);
+}
+.select:focus, .input:focus, .textarea:focus { border-color: rgba(89,214,230,0.5); box-shadow: 0 0 0 3px rgba(89,214,230,0.1); }
+.select option, .select optgroup { background: #0b131b; }
+
+/* —— 滑杆 —— */
+input[type="range"] { accent-color: var(--cop-cyan); }
+
+/* —— 首页渐变文字 —— */
+.grad { background: linear-gradient(90deg, #59d6e6, #57d99b); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* —— 教练区 footer —— */
+.studio-foot { color: var(--cop-txt-3); letter-spacing: 1.5px; }
+
+/* ============================================================
+   v8 美学增强：指挥链动画 · 电文流时间轴 · 玻璃拟态卡片 · 微交互
+   ============================================================ */
+
+/* —— 指挥链：节点发光与连接线 —— */
+.org-node {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+.org-node:hover {
+  background: rgba(89, 214, 230, 0.06);
+  border-color: rgba(89, 214, 230, 0.3);
+  transform: translateX(2px);
+}
+.org-node.active {
+  background: rgba(89, 214, 230, 0.1);
+  border-color: var(--cop-cyan);
+  box-shadow: 0 0 12px rgba(89, 214, 230, 0.15), inset 0 0 8px rgba(89, 214, 230, 0.05);
+}
+.org-node .node-dot {
+  transition: all 0.3s;
+}
+.org-node.active .node-dot {
+  box-shadow: 0 0 8px currentColor;
+  animation: nodePulse 2s ease-in-out infinite;
+}
+@keyframes nodePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.org-tree {
+  position: relative;
+}
+.org-tree::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--cop-line) 10%, var(--cop-line) 90%, transparent);
+}
+
+/* —— 电文流：时间轴与入场动画 —— */
+.feed-item {
+  position: relative;
+  animation: feedIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  border-left: 2px solid transparent;
+  transition: all 0.2s;
+}
+.feed-item:hover {
+  background: rgba(89, 214, 230, 0.04);
+  border-left-color: var(--cop-cyan);
+}
+@keyframes feedIn {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.feed-item .feed-type {
+  font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+}
+.feed-item.tactical {
+  border-left-color: rgba(70, 201, 141, 0.5);
+  background: rgba(70, 201, 141, 0.03);
+}
+.feed-item.escalation {
+  border-left-color: rgba(255, 122, 69, 0.6);
+  background: rgba(255, 122, 69, 0.04);
+}
+.feed-item.drop {
+  border-left-color: rgba(255, 77, 79, 0.5);
+  background: rgba(255, 77, 79, 0.03);
+  opacity: 0.7;
+}
+
+/* —— 一线分队卡片：玻璃拟态 —— */
+.tact-card {
+  background: linear-gradient(135deg, rgba(20, 30, 40, 0.8), rgba(12, 18, 24, 0.9));
+  border: 1px solid var(--cop-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  backdrop-filter: blur(4px);
+  position: relative;
+  overflow: hidden;
+}
+.tact-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(89, 214, 230, 0.3), transparent);
+}
+.tact-card:hover {
+  border-color: rgba(89, 214, 230, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(89, 214, 230, 0.1);
+}
+.tact-card.st-engaging {
+  border-color: rgba(255, 77, 79, 0.4);
+  background: linear-gradient(135deg, rgba(40, 15, 15, 0.8), rgba(20, 10, 10, 0.9));
+}
+.tact-card.st-engaging::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 77, 79, 0.5), transparent);
+  animation: engPulse 1.5s ease-in-out infinite;
+}
+@keyframes engPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.tact-card.st-defending {
+  border-color: rgba(76, 141, 255, 0.35);
+}
+.tact-card.st-withdrawing {
+  border-color: rgba(226, 163, 54, 0.35);
+}
+.tact-card.st-destroyed {
+  opacity: 0.4;
+  filter: grayscale(0.6);
+}
+.tact-bar {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 4px 0;
+}
+.tact-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #46c98d, #6fe0a8);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.tact-st {
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  letter-spacing: 0.5px;
+}
+
+/* —— 顶栏状态指示灯 —— */
+#run-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #46c98d;
+  display: inline-block;
+  margin-right: 4px;
+}
+#run-pulse.on {
+  animation: runPulse 1.2s ease-in-out infinite;
+  box-shadow: 0 0 8px #46c98d;
+}
+@keyframes runPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* —— 昼夜徽章 —— */
+.period {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  border: 1px solid;
+  transition: all 0.4s;
+}
+.period-day {
+  background: rgba(226, 163, 54, 0.15);
+  color: #e2a336;
+  border-color: rgba(226, 163, 54, 0.4);
+  box-shadow: 0 0 8px rgba(226, 163, 54, 0.2);
+}
+.period-dusk {
+  background: rgba(255, 122, 69, 0.15);
+  color: #ff7a45;
+  border-color: rgba(255, 122, 69, 0.4);
+}
+.period-night {
+  background: rgba(76, 141, 255, 0.15);
+  color: #4c8dff;
+  border-color: rgba(76, 141, 255, 0.4);
+  box-shadow: 0 0 8px rgba(76, 141, 255, 0.2);
+}
+
+/* —— 按钮微交互增强 —— */
+.btn {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+.btn::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  transform: translate(-50%, -50%);
+  transition: width 0.4s, height 0.4s;
+}
+.btn:active::after {
+  width: 200px;
+  height: 200px;
+}
+.btn.launch-hero {
+  background: linear-gradient(135deg, rgba(45, 100, 60, 0.9), rgba(30, 70, 45, 0.95));
+  border: 1px solid rgba(70, 201, 141, 0.4);
+  color: #a8f0c8;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.btn.launch-hero:hover {
+  background: linear-gradient(135deg, rgba(55, 120, 70, 0.95), rgba(40, 90, 55, 1));
+  border-color: rgba(70, 201, 141, 0.6);
+  box-shadow: 0 4px 20px rgba(70, 201, 141, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* —— 面板标题：军事标注风 —— */
+.panel-title {
+  position: relative;
+  padding-left: 10px;
+}
+.panel-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  background: linear-gradient(180deg, var(--cop-cyan), transparent);
+  border-radius: 1px;
+}
+
+/* —— 滚动条美化 —— */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(89, 214, 230, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(89, 214, 230, 0.4);
+}
+
+/* —— 视图切换tab —— */
+.rtab {
+  transition: all 0.2s;
+  position: relative;
+}
+.rtab.active {
+  color: var(--cop-cyan);
+}
+.rtab.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--cop-cyan);
+  box-shadow: 0 0 6px var(--cop-cyan);
+}
+
+/* ===== 音效开关按钮 ===== */
+.sound-toggle {
+  background: rgba(20,35,28,0.6);
+  border: 1px solid rgba(100,180,140,0.3);
+  color: #8fd4a8;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: all 0.2s;
+}
+.sound-toggle:hover {
+  background: rgba(40,70,55,0.8);
+  border-color: rgba(100,200,150,0.6);
+}
+
+/* ============================================================
+   单位详情面板（选中浮动卡片）
+   ============================================================ */
+.unit-detail {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  width: 240px;
+  background: rgba(8, 14, 20, 0.92);
+  border: 1px solid rgba(89, 214, 230, 0.25);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  z-index: 10;
+  animation: udSlideIn 0.25s ease-out;
+  overflow: hidden;
+}
+.unit-detail.hidden { display: none; }
+@keyframes udSlideIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ud-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(90deg, rgba(89, 214, 230, 0.1), transparent);
+  border-bottom: 1px solid rgba(89, 214, 230, 0.15);
+}
+.ud-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+.ud-side {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 600;
+}
+.ud-close {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.ud-close:hover { color: #ff6b6b; }
+.ud-body { padding: 6px 10px 8px; }
+.ud-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.ud-row:last-child { border-bottom: none; }
+.ud-label {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+.ud-row span:last-child {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+/* ============================================================
+   地图Tooltip（单位悬停提示）
+   ============================================================ */
+.map-tooltip {
+  position: absolute;
+  z-index: 20;
+  min-width: 160px;
+  background: rgba(8, 14, 20, 0.95);
+  border: 1px solid rgba(89, 214, 230, 0.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(89, 214, 230, 0.1);
+  animation: ttFadeIn 0.15s ease-out;
+  font-size: 11px;
+}
+.map-tooltip.hidden { display: none; }
+@keyframes ttFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tt-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.tt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  color: rgba(215, 228, 236, 0.7);
+  font-size: 10px;
+}
+.tt-row span:last-child {
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ============================================================
+   昼夜进度条
+   ============================================================ */
+.day-bar {
+  position: relative;
+  width: 60px;
+  height: 14px;
+  margin-left: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(120, 190, 220, 0.25);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.day-bar-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, #4a6fa5, #ffd98a, #ff9d45, #4a6fa5);
+  background-size: 200% 100%;
+  transition: width 0.5s ease;
+  border-radius: 6px;
+}
+.day-bar-icon {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 9px;
+  left: 0%;
+  transition: left 0.5s ease;
+  filter: drop-shadow(0 0 3px rgba(255, 217, 138, 0.6));
+  z-index: 1;
+}
+
+/* ============================================================
+   双方兵力对比条
+   ============================================================ */
+.force-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 140px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.force-red {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255,91,106,0.3), rgba(255,91,106,0.7));
+  transition: width 0.5s ease;
+}
+.force-blue {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(107,163,255,0.7), rgba(107,163,255,0.3));
+  transition: width 0.5s ease;
+}
+.force-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.5px;
+}
+
+/* ============================================================
+   电文流展开交互
+   ============================================================ */
+.fi .fi-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding-top: 0;
+}
+.fi.expanded .fi-body {
+  max-height: 200px;
+  padding-top: 4px;
+}
+.fi .fi-toggle {
+  margin-left: auto;
+  font-size: 9px;
+  opacity: 0.5;
+  transition: transform 0.2s ease;
+}
+.fi:hover .fi-toggle { opacity: 1; }
+.fi:hover {
+  background: rgba(89, 214, 230, 0.05);
+  border-left-color: rgba(89, 214, 230, 0.4);
+}
+
+/* ============================================================
+   Tab切换动画
+   ============================================================ */
+.rtab {
+  position: relative;
+  transition: all 0.2s ease;
+}
+.rtab::after {
+  content: "";
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  bottom: -2px;
+  height: 2px;
+  background: var(--cop-cyan);
+  border-radius: 2px;
+  transform: scaleX(0);
+  transition: transform 0.25s var(--ease-2);
+  box-shadow: 0 0 8px rgba(89, 214, 230, 0.5);
+}
+.rtab.active::after {
+  transform: scaleX(1);
+}
+.rtab:not(.active):hover {
+  color: var(--cop-txt);
+  background: rgba(89, 214, 230, 0.06);
+}
+
+/* ============================================================
+   指挥链节点悬停效果
+   ============================================================ */
+.ocard {
+  transition: all 0.18s ease;
+}
+.ocard:hover {
+  background: rgba(89, 214, 230, 0.1);
+  border-color: rgba(89, 214, 230, 0.4);
+  transform: translateX(2px);
+}
+.ocard.flash {
+  animation: ocFlash 0.6s ease;
+}
+@keyframes ocFlash {
+  0% { background: rgba(89, 214, 230, 0.3); }
+  100% { background: transparent; }
+}
+
+/* ============================================================
+   面板内容淡入动画
+   ============================================================ */
+.feed .fi, .tactical .tcard {
+  animation: fiSlideIn 0.3s ease-out;
+}
+@keyframes fiSlideIn {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ============================================================
+   性能优化：will-change 和 渲染优化
+   ============================================================ */
+#map {
+  will-change: transform;
+  transform: translateZ(0);
+}
+.map-tooltip, .unit-detail {
+  will-change: opacity, transform;
+}
+.fi, .tcard {
+  contain: layout style;
+}
+.feed {
+  contain: layout paint;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(89, 214, 230, 0.3) transparent;
+}
+.feed::-webkit-scrollbar {
+  width: 4px;
+}
+.feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+.feed::-webkit-scrollbar-thumb {
+  background: rgba(89, 214, 230, 0.25);
+  border-radius: 2px;
+}
+.feed::-webkit-scrollbar-thumb:hover {
+  background: rgba(89, 214, 230, 0.45);
+}
+
+/* ============================================================
+   视觉细节打磨
+   ============================================================ */
+/* 顶栏运行指示灯呼吸动画增强 */
+#run-pulse.on {
+  animation: pulseBreath 1.5s ease-in-out infinite;
+}
+@keyframes pulseBreath {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px rgba(87, 217, 155, 0.6); }
+  50% { opacity: 0.5; box-shadow: 0 0 12px rgba(87, 217, 155, 0.3); }
+}
+
+/* 面板标题军事标注线增强 */
+.panel-title::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 12px;
+  background: linear-gradient(180deg, var(--cop-cyan), transparent);
+  margin-right: 8px;
+  border-radius: 1px;
+  vertical-align: middle;
+}
+
+/* 按钮点击涟漪效果 */
+.btn {
+  position: relative;
+  overflow: hidden;
+}
+.btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), rgba(89, 214, 230, 0.3), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.btn:active::after {
+  opacity: 1;
+  transition: opacity 0s;
+}
+
+/* 视角切换按钮增强 */
+.vs {
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+.vs:hover {
+  background: rgba(89, 214, 230, 0.1);
+  border-color: rgba(89, 214, 230, 0.3);
+}
+.vs.active {
+  background: rgba(89, 214, 230, 0.15);
+  border-color: rgba(89, 214, 230, 0.5);
+  box-shadow: 0 0 12px rgba(89, 214, 230, 0.2);
+}
+
+/* 缩放控制按钮增强 */
+.map-ctrl button {
+  transition: all 0.18s ease;
+  background: rgba(8, 14, 20, 0.85);
+  border: 1px solid rgba(89, 214, 230, 0.25);
+  color: var(--cop-txt-2);
+  backdrop-filter: blur(4px);
+}
+.map-ctrl button:hover {
+  background: rgba(89, 214, 230, 0.15);
+  border-color: rgba(89, 214, 230, 0.5);
+  color: var(--cop-txt);
+  transform: scale(1.08);
+}
+.map-ctrl button:active {
+  transform: scale(0.95);
+}
+
+/* 图例区域增强 */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.legend .tact-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 3px;
+  vertical-align: middle;
+}

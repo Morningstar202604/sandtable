@@ -45,6 +45,14 @@ def cmd_run(args: argparse.Namespace) -> None:
                 print(f"T{t:03d} [{e['camp']}] ⛔ 隔离拦截：{e.get('reason') or e.get('detail')}")
             elif et == "action":
                 print(f"T{t:03d} [{e['camp']}] → {e['unit']} {e['kind']} {e['target'] or ''}")
+            elif et == "tactical":
+                state_name = {"engaging": "接战", "defending": "防御",
+                              "withdrawing": "后撤", "advancing": "推进",
+                              "holding": "待命"}.get(e.get("state", ""), e.get("state", ""))
+                print(f"T{t:03d} [{e['camp']}] ◆ {e.get('name', e['unit'])} "
+                      f"自主{e['kind']} {e.get('target') or ''} [{state_name}]")
+            elif et == "tactical_rejected":
+                print(f"T{t:03d} [{e['camp']}] ◆ {e['unit']} 自主行动被拒 {e['kind']}")
     print(f"完成：{sim.tick} ticks，事件 {sim.seq} 条。日志：{sim.run_dir / 'events.jsonl'}")
 
 

@@ -14,7 +14,7 @@ const S = {
   nodes: {}, sideNames: {}, sideColors: {},
   factions: [], factionsKey: "",
   metricsTab: false,
-  cam: { scale: 1, panX: 0, panY: 0, drag: null, view: null },
+  cam: { scale: 1, panX: 0, panY: 0, drag: null, view: null, anim: null },
   directOpen: false,
   // 作业区状态（路口式入口 + 独立工作台）
   studioView: "home",         // home / scenario / roster / director
@@ -22,6 +22,15 @@ const S = {
   roleEdits: {}, intentEdits: {}, collapsed: {},   // 兵力编成：职位 -> 是否折叠（true=折叠）
   script: [],                 // 导演部导调剧本（本地队列）
   llm: { available: false, model: "" },
+  // 战斗特效系统
+  effects: [],          // {type, x, y, start, duration, color, size, fromX, fromY}
+  unitPrevPos: {},      // unit_id -> {x, y, tick} 用于移动平滑插值
+  unitRenderPos: {},    // unit_id -> {px, py} 当前渲染的像素位置（平滑插值用）
+  viewFlash: null,      // 视角切换扫描线过渡 {start}
+  // 音效系统
+  audio: { ctx: null, enabled: true, volume: 0.3, lastPlay: {} },
+  selectedUnit: null,   // 选中的单位ID
+  decisionBubbles: [],  // 战术Agent决策气泡 {unit_id, text, x, y, start, duration}
 };
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -98,21 +107,26 @@ function boot() {
    "debug-search", "debug-side", "debug-count", "agent-list-items",
    "dbg-empty", "dbg-detail", "dbg-title", "dbg-meta", "dbg-live",
    "dbg-tabs", "dbg-content", "debug-export",
+   // v7 增强：一线分队战术面板 + 昼夜/天气指示
+   "tactical", "deck-period", "deck-weather",
   ].forEach((k) => (els[k] = $(k)));
   document.querySelectorAll(".vs").forEach((b) => b.addEventListener("click", () => {
     document.querySelectorAll(".vs").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     S.view = b.dataset.view;
-    drawMap();
+    scheduleDraw();
   }));
   els["feed-filter"].addEventListener("change", (e) => { S.filter = e.target.value; applyFeedFilter(); });
   document.querySelectorAll(".rtab").forEach((t) => t.addEventListener("click", () => {
     document.querySelectorAll(".rtab").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
-    S.metricsTab = t.dataset.rtab === "metrics";
-    els.feed.classList.toggle("hidden", S.metricsTab);
-    els.metrics.classList.toggle("hidden", !S.metricsTab);
-    if (S.metricsTab) fetchMetrics();
+    const tab = t.dataset.rtab;
+    S.metricsTab = tab === "metrics";
+    els.feed.classList.toggle("hidden", tab !== "feed");
+    els.tactical.classList.toggle("hidden", tab !== "tactical");
+    els.metrics.classList.toggle("hidden", tab !== "metrics");
+    if (tab === "metrics") fetchMetrics();
+    if (tab === "tactical") renderTacticalPanel();
   }));
   setInterval(() => { if (S.metricsTab) fetchMetrics(); }, 3000);
 
@@ -120,13 +134,23 @@ function boot() {
   els["btn-pause"].onclick = () => control({ action: "pause" });
   els["btn-step"].onclick = () => control({ action: "step" });
   els["btn-reset"].onclick = () => control({ action: "reset" }, true);
+  // 音效开关
+  const soundBtn = document.getElementById("sound-toggle");
+  if (soundBtn) {
+    soundBtn.addEventListener("click", () => {
+      S.audio.enabled = !S.audio.enabled;
+      soundBtn.textContent = S.audio.enabled ? "🔊" : "🔇";
+      soundBtn.style.opacity = S.audio.enabled ? "1" : "0.4";
+      if (S.audio.enabled) { initAudio(); playSound("message"); }
+    });
+  }
   els["speed"].onchange = (e) => control({ action: "speed", speed: parseFloat(e.target.value) });
   els["btn-intent"].onclick = sendIntent;
   els["intent-text"].addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendIntent();
   });
 
-  new ResizeObserver(drawMap).observe(els["map"].parentElement);
+  new ResizeObserver(scheduleDraw).observe(els["map"].parentElement);
   wireCamera();
   buildTuningUI();
   wireStudio();
@@ -139,6 +163,40 @@ function boot() {
 
   // 启动即进入作业桌（导演部导控台主界面）
   initStudio();
+  // 按钮点击涟漪效果
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".btn");
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      btn.style.setProperty("--ripple-x", (e.clientX - r.left) + "px");
+      btn.style.setProperty("--ripple-y", (e.clientY - r.top) + "px");
+    }
+  });
+
+  // 键盘快捷键：按1-9选中对应单位，Esc取消选中
+  document.addEventListener("keydown", (e) => {
+    if (e.key >= "1" && e.key <= "9") {
+      const idx = parseInt(e.key) - 1;
+      const st = S.state;
+      if (!st) return;
+      let units = [];
+      if (S.view === "director") {
+        units = S.factions.flatMap((f) => (st.camps[f] || {}).units || []);
+      } else {
+        units = (st.camps[S.view] || {}).units || [];
+      }
+      if (units[idx]) {
+        S.selectedUnit = units[idx].id;
+        renderUnitDetail(units[idx]);
+        scheduleDraw();
+      }
+    }
+    if (e.key === "Escape") {
+      S.selectedUnit = null;
+      document.getElementById("unit-detail")?.classList.add("hidden");
+      scheduleDraw();
+    }
+  });
 }
 
 // ============================================================
@@ -710,42 +768,341 @@ async function saveScript() {
 // ============================================================
 function wireCamera() {
   const cv = els["map"];
+  S.mapCanvas = cv;
+  const tooltip = document.getElementById("map-tooltip");
+
   cv.addEventListener("wheel", (e) => {
     e.preventDefault();
     const r = cv.getBoundingClientRect();
     zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.15 : 1 / 1.15);
   }, { passive: false });
+
   cv.addEventListener("mousedown", (e) => {
-    if (S.cam.scale <= 1) return;
-    S.cam.drag = { x: e.clientX, y: e.clientY, px: S.cam.panX, py: S.cam.panY };
-    cv.classList.add("dragging");
+    S.cam.dragStart = { x: e.clientX, y: e.clientY };
+    if (tooltip) tooltip.classList.add("hidden");
   });
+
+  // 双击重置视角
+  cv.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    S.cam.anim = {
+      startScale: S.cam.scale, targetScale: 1,
+      startPanX: S.cam.panX, startPanY: S.cam.panY,
+      targetPanX: 0, targetPanY: 0,
+      startTime: performance.now(), duration: 400,
+    };
+    startAnimLoop();
+  });
+
   window.addEventListener("mousemove", (e) => {
-    if (!S.cam.drag) return;
-    S.cam.panX = S.cam.drag.px + (e.clientX - S.cam.drag.x);
-    S.cam.panY = S.cam.drag.py + (e.clientY - S.cam.drag.y);
-    drawMap();
+    // 拖拽处理
+    if (S.cam.dragStart && !S.cam.drag) {
+      const dx = Math.abs(e.clientX - S.cam.dragStart.x);
+      const dy = Math.abs(e.clientY - S.cam.dragStart.y);
+      if (dx > 5 || dy > 5) {
+        if (S.cam.scale > 1) {
+          S.cam.drag = { x: e.clientX, y: e.clientY, px: S.cam.panX, py: S.cam.panY };
+          cv.classList.add("dragging");
+        }
+      }
+    }
+    if (S.cam.drag) {
+      // 边界限制：防止拖出地图
+      const st = S.state;
+      if (st && S.cam.view) {
+        const v = S.cam.view;
+        const cs = v.base * S.cam.scale;
+        const mapW = cs * st.w, mapH = cs * st.h;
+        const maxPanX = Math.max(0, mapW - v.cw);
+        const maxPanY = Math.max(0, mapH - v.ch);
+        S.cam.panX = Math.max(-maxPanX, Math.min(0, S.cam.drag.px + (e.clientX - S.cam.drag.x)));
+        S.cam.panY = Math.max(-maxPanY, Math.min(0, S.cam.drag.py + (e.clientY - S.cam.drag.y)));
+      } else {
+        S.cam.panX = S.cam.drag.px + (e.clientX - S.cam.drag.x);
+        S.cam.panY = S.cam.drag.py + (e.clientY - S.cam.drag.y);
+      }
+      scheduleDraw();
+      return;
+    }
+
+    // hover检测：显示单位tooltip
+    if (!S.cam.dragStart && tooltip && S.state && S.cam.view) {
+      const r = cv.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      if (mx >= 0 && mx <= r.width && my >= 0 && my <= r.height) {
+        const hovered = _findUnitAt(mx, my);
+        if (hovered) {
+          cv.style.cursor = "pointer";
+          const sideColor = color(hovered.side);
+          const kindMap = { infantry: "步兵", armor: "装甲", artillery: "炮兵", recon: "侦察" };
+          const stateMap = { advancing: "推进", engaging: "接战", defending: "防御", withdrawing: "后撤", holding: "待命", resting: "休整", reorganizing: "重组", destroyed: "全损" };
+          const str = hovered.strength ?? hovered.str ?? 0;
+          const maxStr = hovered.max_strength ?? 100;
+          const strPct = Math.round((str / maxStr) * 100);
+          const strColor = strPct > 60 ? "#57d99b" : strPct > 30 ? "#e0b06a" : "#ff5f5f";
+          tooltip.innerHTML = `
+            <div class="tt-name" style="color:${sideColor}">${hovered.name || hovered.id}</div>
+            <div class="tt-row"><span>${kindMap[hovered.kind] || hovered.kind}</span><span style="color:${strColor}">兵力 ${strPct}%</span></div>
+            <div class="tt-row"><span>坐标 (${hovered.x},${hovered.y})</span><span>${stateMap[hovered.state] || hovered.state || ""}</span></div>
+          `;
+          tooltip.style.left = (e.clientX - r.left + 14) + "px";
+          tooltip.style.top = (e.clientY - r.top + 14) + "px";
+          tooltip.classList.remove("hidden");
+        } else {
+          cv.style.cursor = S.cam.scale > 1 ? "grab" : "zoom-in";
+          tooltip.classList.add("hidden");
+        }
+      } else {
+        tooltip.classList.add("hidden");
+      }
+    }
   });
-  window.addEventListener("mouseup", () => { S.cam.drag = null; cv.classList.remove("dragging"); });
+
+  window.addEventListener("mouseup", () => {
+    S.cam.drag = null; cv.classList.remove("dragging");
+    S.cam.dragStart = null;
+  });
+
+  cv.addEventListener("mouseleave", () => {
+    if (tooltip) tooltip.classList.add("hidden");
+  });
+
   els["zoom-in"].onclick = () => { const r = cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.3); };
   els["zoom-out"].onclick = () => { const r = cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1 / 1.3); };
-  els["zoom-reset"].onclick = () => { S.cam.scale = 1; S.cam.panX = 0; S.cam.panY = 0; drawMap(); };
+  els["zoom-reset"].onclick = () => {
+    S.cam.anim = {
+      startScale: S.cam.scale, targetScale: 1,
+      startPanX: S.cam.panX, startPanY: S.cam.panY,
+      targetPanX: 0, targetPanY: 0,
+      startTime: performance.now(), duration: 350,
+    };
+    startAnimLoop();
+  };
 }
+
+// 查找指定坐标下的单位（用于hover检测）
+function _findUnitAt(mx, my) {
+  const st = S.state;
+  if (!st || !S.cam.view) return null;
+  const v = S.cam.view;
+  let units = [];
+  if (S.view === "director") {
+    units = S.factions.flatMap((f) => (st.camps[f] || {}).units || []);
+  } else {
+    units = (st.camps[S.view] || {}).units || [];
+  }
+  let hit = null, hitDist = Infinity;
+  for (const u of units) {
+    const rp = S.unitRenderPos[u.id];
+    const px = rp ? rp.px : (v.ox + u.x * v.cs);
+    const py = rp ? rp.py : (v.oy + u.y * v.cs);
+    const cx = px + v.cs / 2, cy = py + v.cs / 2;
+    const dist = Math.sqrt((mx - cx) ** 2 + (my - cy) ** 2);
+    if (dist < v.cs * 0.6 && dist < hitDist) {
+      hit = u; hitDist = dist;
+    }
+  }
+  return hit;
+}
+
+// 聚焦到指定单位（平滑动画）
+function focusOnUnit(u) {
+  if (!u || !S.cam.view) return;
+  const v = S.cam.view;
+  const targetScale = Math.max(1.5, Math.min(3, S.cam.scale));
+  const cs = v.base * targetScale;
+  const targetPanX = v.cw / 2 - (u.x * cs + cs / 2);
+  const targetPanY = v.ch / 2 - (u.y * cs + cs / 2);
+  S.cam.anim = {
+    startScale: S.cam.scale, targetScale,
+    startPanX: S.cam.panX, startPanY: S.cam.panY,
+    targetPanX, targetPanY,
+    startTime: performance.now(), duration: 500,
+  };
+  startAnimLoop();
+}
+
+function _trySelectUnit(clientX, clientY) {
+  const st = S.state;
+  if (!st) return;
+  const cv = S.mapCanvas;
+  if (!cv) return;
+  const r = cv.getBoundingClientRect();
+  const mx = clientX - r.left, my = clientY - r.top;
+  const v = S.cam.view;
+  if (!v) return;
+  let units = [];
+  if (S.view === "director") {
+    units = S.factions.flatMap((f) => (st.camps[f] || {}).units || []);
+  } else {
+    const camp = st.camps[S.view] || {};
+    units = (camp.units || []).slice();
+    for (const i of (camp.intel || [])) {
+      const owner = S.factions.find((f) => f !== S.view);
+      units.push({ id: i.unit_id, side: owner, kind: i.kind, x: i.x, y: i.y, ghost: true });
+    }
+  }
+  let hit = null, hitDist = Infinity;
+  for (const u of units) {
+    const rp = S.unitRenderPos[u.id];
+    const px = rp ? rp.px : (v.ox + u.x * v.cs);
+    const py = rp ? rp.py : (v.oy + u.y * v.cs);
+    const cx = px + v.cs / 2, cy = py + v.cs / 2;
+    const dist = Math.sqrt((mx - cx) ** 2 + (my - cy) ** 2);
+    if (dist < v.cs * 0.6 && dist < hitDist) {
+      hit = u; hitDist = dist;
+    }
+  }
+  S.selectedUnit = hit ? hit.id : null;
+  if (hit) {
+    playSound("message");
+    renderUnitDetail(hit);
+    focusOnUnit(hit);
+  }
+  scheduleDraw();
+}
+
+function renderUnitDetail(u) {
+  const panel = document.getElementById("unit-detail");
+  if (!panel || !u) return;
+  panel.classList.remove("hidden");
+  const sideColor = color(u.side);
+  document.getElementById("ud-name").textContent = u.name || u.id;
+  document.getElementById("ud-name").style.color = sideColor;
+  document.getElementById("ud-side").textContent = u.side === "red" ? "红军" : u.side === "blue" ? "蓝军" : u.side;
+  document.getElementById("ud-side").style.color = sideColor;
+  const kindMap = { infantry: "步兵", armor: "装甲", artillery: "炮兵", recon: "侦察" };
+  document.getElementById("ud-kind").textContent = kindMap[u.kind] || u.kind || "--";
+  document.getElementById("ud-pos").textContent = `(${u.x}, ${u.y})`;
+  document.getElementById("ud-str").textContent = `${u.strength ?? u.str ?? "--"} / ${u.max_strength ?? 100}`;
+  document.getElementById("ud-sup").textContent = `${u.supply ?? "--"}`;
+  document.getElementById("ud-fat").textContent = `${((u.fatigue ?? 0) * 100).toFixed(0)}%`;
+  const moraleMap = { steady: "稳定", shaken: "动摇", breaking: "崩溃", reorg: "重组" };
+  const moraleVal = u.morale ?? 1;
+  const moralePct = moraleVal > 1 ? moraleVal.toFixed(0) : (moraleVal * 100).toFixed(0);
+  document.getElementById("ud-mor").textContent = `${moraleMap[u.morale_state] || u.morale_state || "--"} (${moralePct}%)`;
+  const stateMap = { advancing: "推进", engaging: "接战", defending: "防御", withdrawing: "后撤", holding: "待命", resting: "休整", reorganizing: "重组", destroyed: "全损" };
+  document.getElementById("ud-state").textContent = stateMap[u.state] || u.state || "--";
+  // 查找战术Agent状态
+  let tacState = "--";
+  if (S.state && S.state.camps) {
+    for (const f of S.factions) {
+      const camp = S.state.camps[f] || {};
+      const t = (camp.tactical || []).find((x) => x.unit_id === u.id);
+      if (t) { tacState = stateMap[t.state] || t.state; break; }
+    }
+  }
+  document.getElementById("ud-tac").textContent = tacState;
+  // v0.9.7 新因素显示
+  const ammoEl = document.getElementById("ud-ammo");
+  if (ammoEl) {
+    const ammo = u.ammo ?? 100;
+    ammoEl.textContent = ammo + "%";
+    ammoEl.style.color = ammo < 20 ? "#ff5f5f" : ammo < 50 ? "#e0b06a" : "inherit";
+  }
+  const fuelEl = document.getElementById("ud-fuel");
+  if (fuelEl) {
+    const fuel = u.fuel ?? 100;
+    fuelEl.textContent = fuel + "%";
+    fuelEl.style.color = fuel < 20 ? "#ff5f5f" : "inherit";
+  }
+  const expEl = document.getElementById("ud-exp");
+  if (expEl) {
+    const expMap = { green: "新兵", regular: "正规", veteran: "老兵", elite: "精锐" };
+    expEl.textContent = `${expMap[u.exp_level] || u.exp_level || "--"} (${u.experience ?? 0})`;
+    expEl.style.color = u.exp_level === "elite" ? "#ffd700" : u.exp_level === "veteran" ? "#57d99b" : "inherit";
+  }
+  const entEl = document.getElementById("ud-ent");
+  if (entEl) {
+    if (u.entrenched) {
+      entEl.textContent = `Lv.${u.entrench_level || 1}`;
+      entEl.style.color = "#7dd3fc";
+    } else {
+      entEl.textContent = "无";
+    }
+  }
+  const formEl = document.getElementById("ud-form");
+  if (formEl) {
+    formEl.textContent = u.formation === "combat" ? "战斗队形" : "行军队形";
+    formEl.style.color = u.formation === "march" ? "#e0b06a" : "inherit";
+  }
+  const cmdEl = document.getElementById("ud-cmd");
+  if (cmdEl) {
+    if (u.is_commander) {
+      cmdEl.textContent = "指挥官";
+      cmdEl.style.color = "#ffd700";
+    } else if (u.in_command === false) {
+      cmdEl.textContent = "超出范围";
+      cmdEl.style.color = "#ff5f5f";
+    } else {
+      cmdEl.textContent = "正常";
+    }
+  }
+  const slineEl = document.getElementById("ud-sline");
+  if (slineEl) {
+    if (u.supply_line_cut) {
+      slineEl.textContent = "已切断";
+      slineEl.style.color = "#ff5f5f";
+    } else {
+      slineEl.textContent = "畅通";
+      slineEl.style.color = "#57d99b";
+    }
+  }
+}
+
+function easeOutBack(t) {
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+// 全局点击监听：点击地图canvas时选中单位
+document.addEventListener("click", (e) => {
+  const cv = document.getElementById("map");
+  if (!cv) return;
+  const r = cv.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  _trySelectUnit(e.clientX, e.clientY);
+});
 
 function zoomAt(mx, my, factor) {
   const st = S.state, v = S.cam.view;
   if (!st || !v) return;
   const wx = (mx - v.ox) / v.cs, wy = (my - v.oy) / v.cs;
-  S.cam.scale = Math.max(1, Math.min(6, S.cam.scale * factor));
+  const targetScale = Math.max(1, Math.min(6, S.cam.scale * factor));
   const cw = v.cw, ch = v.ch;
-  const cs2 = v.base * S.cam.scale;
+  const cs2 = v.base * targetScale;
   const cW = cs2 * st.w, cH = cs2 * st.h;
   let ox = mx - wx * cs2, oy = my - wy * cs2;
   ox = (cW <= cw) ? (cw - cW) / 2 : Math.max(cw - cW, Math.min(0, ox));
   oy = (cH <= ch) ? (ch - cH) / 2 : Math.max(ch - cH, Math.min(0, oy));
-  S.cam.panX = ox - (cw - cW) / 2;
-  S.cam.panY = oy - (ch - cH) / 2;
-  drawMap();
+  const targetPanX = ox - (cw - cW) / 2;
+  const targetPanY = oy - (ch - cH) / 2;
+  // 启动弹性缩放动画
+  S.cam.anim = {
+    startScale: S.cam.scale, targetScale,
+    startPanX: S.cam.panX, startPanY: S.cam.panY,
+    targetPanX, targetPanY,
+    startTime: performance.now(), duration: 350,
+  };
+  startAnimLoop();
+}
+
+function _updateZoomAnim() {
+  if (!S.cam.anim) return false;
+  const a = S.cam.anim;
+  const t = Math.min(1, (performance.now() - a.startTime) / a.duration);
+  const e = easeOutBack(t);
+  S.cam.scale = a.startScale + (a.targetScale - a.startScale) * e;
+  S.cam.panX = a.startPanX + (a.targetPanX - a.startPanX) * e;
+  S.cam.panY = a.startPanY + (a.targetPanY - a.startPanY) * e;
+  if (t >= 1) {
+    S.cam.scale = a.targetScale;
+    S.cam.panX = a.targetPanX;
+    S.cam.panY = a.targetPanY;
+    S.cam.anim = null;
+    return false;
+  }
+  return true;
 }
 
 // ---------- 设置面板 ----------
@@ -1319,6 +1676,7 @@ async function fetchState() {
     if (st.epoch !== S.epoch) { S.epoch = st.epoch; els.feed.innerHTML = ""; }
     S.state = st;
     S.sideNames = st.side_names || {};
+    startAnimLoop(); // 状态更新后启动动画循环（单位移动/特效）
     S.factions = Object.keys(st.camps || {});
     buildFactionUI();
     buildLookup(st);
@@ -1326,17 +1684,138 @@ async function fetchState() {
     els.scenario.textContent = goodsWeather(st);
     els["deck-scenario"].textContent = st.scenario || "";
     els["run-pulse"].classList.toggle("on", st.running);
+    // 昼夜时段与天气指示
+    const prd = els["deck-period"];
+    if (prd) {
+      const pn = st.period === "night" ? "夜" : st.period === "dusk" ? "昏" : "昼";
+      prd.textContent = pn;
+      prd.className = "period period-" + (st.period || "day");
+    }
+    // 昼夜进度条
+    const dayFill = document.getElementById("day-bar-fill");
+    const dayIcon = document.getElementById("day-bar-icon");
+    if (dayFill && dayIcon) {
+      const dayProgress = ((st.tick % 24) / 24) * 100;
+      dayFill.style.width = dayProgress + "%";
+      dayIcon.style.left = dayProgress + "%";
+      // 根据时段切换图标
+      if (st.period === "night") {
+        dayIcon.textContent = "☾";
+        dayIcon.style.filter = "drop-shadow(0 0 3px rgba(157,184,255,0.8))";
+      } else if (st.period === "dusk") {
+        dayIcon.textContent = "◐";
+        dayIcon.style.filter = "drop-shadow(0 0 3px rgba(255,157,69,0.8))";
+      } else {
+        dayIcon.textContent = "☀";
+        dayIcon.style.filter = "drop-shadow(0 0 3px rgba(255,217,138,0.8))";
+      }
+    }
+    // 双方兵力对比
+    const forceRed = document.getElementById("force-red");
+    const forceBlue = document.getElementById("force-blue");
+    const forceLabel = document.getElementById("force-label");
+    if (forceRed && forceBlue && forceLabel) {
+      let redStr = 0, blueStr = 0;
+      for (const f of S.factions) {
+        const camp = st.camps[f] || {};
+        const total = (camp.units || []).reduce((s, u) => s + (u.strength || 0), 0);
+        if (f === "red") redStr = total;
+        else blueStr += total;
+      }
+      const total = redStr + blueStr || 1;
+      const redPct = (redStr / total) * 100;
+      const bluePct = (blueStr / total) * 100;
+      forceRed.style.width = redPct + "%";
+      forceBlue.style.width = bluePct + "%";
+      forceLabel.textContent = `${Math.round(redStr)} : ${Math.round(blueStr)}`;
+    }
+    const wtx = els["deck-weather"];
+    if (wtx) { wtx.textContent = goodsWeather(st).replace(/^.*?/, ""); wtx.textContent = st.weather_name || st.weather || ""; }
     const badge = els["mode-badge"];
     badge.textContent = st.llm.available ? `LLM · ${st.llm.model}` : `规则模式 · seed ${st.seed}`;
     badge.classList.toggle("llm", st.llm.available);
     renderOrg();
     renderLegend();
-    drawMap();
+    scheduleDraw();
+    // 刷新一线分队面板（若当前可见）
+    if (!els.tactical.classList.contains("hidden")) renderTacticalPanelThrottled();
   } catch (e) { /* 服务未就绪时静默重试 */ }
 }
 
 function goodsWeather(st) {
   return st.weather ? WEATHER_CN[st.weather] || st.weather : "";
+}
+
+/* 一线分队面板：实时展示每个战术Agent（作战单元）的自主状态。 */
+const TACT_STATE_CN = {
+  advancing: "推进", engaging: "接战", defending: "防御",
+  withdrawing: "后撤", holding: "待命", resting: "休整",
+  reorganizing: "重组", destroyed: "全损",
+};
+// 战术面板节流（性能优化：fetchState每1.2秒调用，节流到2秒一次）
+let _tactLastRender = 0;
+function renderTacticalPanelThrottled() {
+  const now = Date.now();
+  if (now - _tactLastRender < 2000) return;
+  _tactLastRender = now;
+  renderTacticalPanel();
+}
+function renderTacticalPanel() {
+  const box = els.tactical;
+  if (!box) return;
+  const st = S.state;
+  if (!st || !st.camps) return;
+  const frag = document.createDocumentFragment();
+  const title = document.createElement("div");
+  title.className = "tact-summary";
+  title.textContent = "一线分队自主态势 · 每个作战单位绑定一个战术Agent";
+  frag.appendChild(title);
+  for (const side of S.factions) {
+    const camp = st.camps[side] || {};
+    const tacts = camp.tactical || [];
+    const units = {};
+    for (const u of (camp.units || [])) units[u.id] = u;
+    const sideColor = color(side);
+    const sec = document.createElement("div");
+    sec.className = "tact-side";
+    const hd = document.createElement("div");
+    hd.className = "tact-side-head";
+    hd.innerHTML = `<i style="background:${sideColor}"></i><b>${esc(S.sideNames[side] || side)}</b>
+      <span>${tacts.filter(t => t.state !== "destroyed").length} 个分队</span>`;
+    sec.appendChild(hd);
+    if (!tacts.length) {
+      const none = document.createElement("div");
+      none.className = "tact-none";
+      none.textContent = "暂无战术分队";
+      sec.appendChild(none);
+    }
+    const sorted = [...tacts].sort((a, b) =>
+      (a.state === "destroyed") - (b.state === "destroyed"));
+    for (const t of sorted) {
+      const u = units[t.unit_id];
+      const card = document.createElement("div");
+      card.className = "tact-card st-" + t.state;
+      const cn = TACT_STATE_CN[t.state] || t.state_name || t.state;
+      const str = u ? Math.round(u.strength) : "—";
+      const mor = u && u.morale !== undefined ? Math.round(u.morale) : "—";
+      const fat = u && u.fatigue !== undefined ? Math.round(u.fatigue) : "—";
+      const sup = u && u.suppressed ? " · 压制" : "";
+      const pos = u ? `(${u.x},${u.y})` : "";
+      const dec = t.last_decision ? `<div class="tact-dec">${esc(t.last_decision)}</div>` : "";
+      card.innerHTML = `
+        <div class="tact-card-top">
+          <span class="tact-name">${esc(t.unit_id)}</span>
+          <span class="tact-st">${cn}${sup}</span>
+        </div>
+        <div class="tact-bar"><i style="width:${Math.max(0, Math.min(100, str))}%"></i></div>
+        <div class="tact-meta">兵力 ${str} · 士气 ${mor} · 疲劳 ${fat} · ${pos}</div>
+        ${dec}`;
+      sec.appendChild(card);
+    }
+    frag.appendChild(sec);
+  }
+  box.innerHTML = "";
+  box.appendChild(frag);
 }
 
 function buildLookup(st) {
@@ -1379,10 +1858,15 @@ function buildFactionUI() {
     S.factions.map((f) =>
       `<button class="vs" data-view="${f}">${esc(S.sideNames[f] || f)}视角</button>`).join("");
   els["view-switch"].querySelectorAll(".vs").forEach((b) => b.addEventListener("click", () => {
+    if (S.view === b.dataset.view) return;
     els["view-switch"].querySelectorAll(".vs").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     S.view = b.dataset.view;
-    drawMap();
+    S.viewFlash = { start: performance.now() };
+    // 切换视角时重置单位渲染位置，避免跨视角单位错位
+    S.unitRenderPos = {};
+    startAnimLoop();
+    scheduleDraw();
   }));
   els["intent-target"].textContent = `→ ${S.sideNames[S.camp] || S.camp}主官`;
   renderOrg();
@@ -1423,6 +1907,49 @@ function renderOrg() {
     </li>`;
   }
   wrap.innerHTML = `<ul class="otree">${nodeHTML(camp.org)}</ul>`;
+  // 指挥链节点点击：高亮下辖单位并聚焦
+  wrap.querySelectorAll(".ocard").forEach((card) => {
+    card.style.cursor = "pointer";
+    card.addEventListener("click", () => {
+      const node = card.closest(".onode");
+      if (!node) return;
+      const posId = node.dataset.pos;
+      // 收集该节点下辖的所有单位
+      const unitIds = new Set();
+      function collect(n) {
+        (n.units || []).forEach((u) => unitIds.add(u.id || u));
+        (n.children || []).forEach(collect);
+      }
+      function findNode(n, id) {
+        if (n.id === id) return n;
+        for (const c of (n.children || [])) {
+          const r = findNode(c, id);
+          if (r) return r;
+        }
+        return null;
+      }
+      const target = findNode(camp.org, posId);
+      if (target) collect(target);
+      // 高亮第一个单位
+      if (unitIds.size > 0 && S.state) {
+        const firstId = Array.from(unitIds)[0];
+        for (const f of S.factions) {
+          const c = S.state.camps[f] || {};
+          const u = (c.units || []).find((x) => x.id === firstId);
+          if (u) {
+            S.selectedUnit = u.id;
+            renderUnitDetail(u);
+            focusOnUnit(u);
+            scheduleDraw();
+            break;
+          }
+        }
+      }
+      // 节点闪烁反馈
+      card.classList.add("flash");
+      setTimeout(() => card.classList.remove("flash"), 600);
+    });
+  });
 }
 
 function animateMsg(e) {
@@ -1433,7 +1960,732 @@ function animateMsg(e) {
 }
 
 // ---------- 态势图 ----------
-function drawMap() {
+// ===== 地形层缓存（离屏canvas，性能优化）=====
+const _terrainCache = { canvas: null, key: "", w: 0, h: 0, cs: 0 };
+
+function _terrainKey(st, cs) {
+  // 地形缓存键：map序列化 + 格子尺寸 + 宽高
+  let h = st.w + "x" + st.h + "_" + Math.round(cs * 100) + "_";
+  for (let y = 0; y < st.h; y++) h += st.map[y];
+  return h;
+}
+
+function _drawTerrainTexture(ctx, st, cs) {
+  // 程序化地形纹理：河流光泽、森林点阵、丘陵等高线、城镇建筑、桥梁、道路
+  const W = st.w * cs, H = st.h * cs;
+  // 基础底色
+  ctx.fillStyle = "#1a2418";
+  ctx.fillRect(0, 0, W, H);
+
+  for (let y = 0; y < st.h; y++) {
+    for (let x = 0; x < st.w; x++) {
+      const t = st.map[y][x];
+      const px = x * cs, py = y * cs;
+      if (t === "~") {
+        // 河流：深蓝渐变 + 光泽波纹
+        const g = ctx.createLinearGradient(px, py, px + cs, py + cs);
+        g.addColorStop(0, "#1a3a5c");
+        g.addColorStop(0.5, "#2a5a8c");
+        g.addColorStop(1, "#1a3a5c");
+        ctx.fillStyle = g;
+        ctx.fillRect(px, py, cs, cs);
+        // 波纹高光
+        ctx.strokeStyle = "rgba(140,200,255,0.15)";
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(px + cs * 0.1, py + cs * 0.3 + (x + y) % 3);
+        ctx.quadraticCurveTo(px + cs * 0.5, py + cs * 0.2, px + cs * 0.9, py + cs * 0.35);
+        ctx.stroke();
+      } else if (t === "f" || t === "F") {
+        // 森林：深绿底 + 树点纹理
+        ctx.fillStyle = "#1e3a1e";
+        ctx.fillRect(px, py, cs, cs);
+        ctx.fillStyle = "rgba(60,120,60,0.5)";
+        const seed = (x * 31 + y * 17) % 7;
+        for (let i = 0; i < 4; i++) {
+          const tx = px + ((i * 7 + seed) % 10) / 10 * cs;
+          const ty = py + ((i * 11 + seed * 3) % 10) / 10 * cs;
+          ctx.beginPath();
+          ctx.arc(tx, ty, cs * 0.12, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (t === "h" || t === "H") {
+        // 丘陵：土黄底 + 等高线弧线
+        ctx.fillStyle = "#3a3520";
+        ctx.fillRect(px, py, cs, cs);
+        ctx.strokeStyle = "rgba(180,160,100,0.25)";
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.arc(px + cs / 2, py + cs / 2, cs * 0.3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(px + cs / 2, py + cs / 2, cs * 0.15, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (t === "T" || t === "C") {
+        // 城镇：灰底 + 建筑块
+        ctx.fillStyle = "#2a2a30";
+        ctx.fillRect(px, py, cs, cs);
+        ctx.fillStyle = "rgba(140,140,150,0.4)";
+        const seed = (x * 13 + y * 29) % 5;
+        for (let i = 0; i < 3; i++) {
+          const bx = px + ((i * 5 + seed) % 8) / 10 * cs + cs * 0.05;
+          const by = py + ((i * 7 + seed * 2) % 8) / 10 * cs + cs * 0.05;
+          ctx.fillRect(bx, by, cs * 0.2, cs * 0.2);
+        }
+      } else if (t === "B") {
+        // 桥梁：木色桥面跨河
+        ctx.fillStyle = "#5a4a30";
+        ctx.fillRect(px, py, cs, cs);
+        ctx.strokeStyle = "rgba(200,170,100,0.5)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(px, py + cs * 0.3);
+        ctx.lineTo(px + cs, py + cs * 0.3);
+        ctx.moveTo(px, py + cs * 0.7);
+        ctx.lineTo(px + cs, py + cs * 0.7);
+        ctx.stroke();
+      } else if (t === "R") {
+        // 道路：暗色路径
+        ctx.fillStyle = "#2a2820";
+        ctx.fillRect(px, py, cs, cs);
+        ctx.strokeStyle = "rgba(100,90,70,0.3)";
+        ctx.lineWidth = 0.5;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(px, py + cs / 2);
+        ctx.lineTo(px + cs, py + cs / 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // 平原：基础草地
+        ctx.fillStyle = "#1f2a1c";
+        ctx.fillRect(px, py, cs, cs);
+        // 微纹理
+        if ((x + y) % 3 === 0) {
+          ctx.fillStyle = "rgba(50,80,45,0.3)";
+          ctx.fillRect(px + cs * 0.2, py + cs * 0.3, cs * 0.15, cs * 0.15);
+        }
+      }
+    }
+  }
+}
+
+function _getTerrainLayer(st, cs) {
+  const key = _terrainKey(st, cs);
+  if (_terrainCache.canvas && _terrainCache.key === key) {
+    return _terrainCache.canvas;
+  }
+  const W = Math.ceil(st.w * cs), H = Math.ceil(st.h * cs);
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const octx = off.getContext("2d");
+  _drawTerrainTexture(octx, st, cs);
+  _terrainCache.canvas = off;
+  _terrainCache.key = key;
+  _terrainCache.w = W; _terrainCache.h = H;
+  return off;
+}
+
+// ===== 精致单位图标绘制（NATO军事符号风格）=====
+function _drawUnitIcon(ctx, u, px, py, cs, st, tacticalMap) {
+  const sideColor = color(u.side);
+  const cx = px + cs / 2, cy = py + cs / 2;
+  const size = cs * 0.38;
+
+  // 状态光环（接战脉冲/防御/后撤/推进）
+  const tstate = tacticalMap[u.id];
+  if (tstate && tstate !== "holding" && tstate !== "destroyed") {
+    const TACT_COLOR = {
+      engaging: "#ff4d4f", defending: "#4c8dff", withdrawing: "#e2a336",
+      advancing: "#46c98d",
+    };
+    const tc = TACT_COLOR[tstate] || "#7c8a98";
+    const pulse = tstate === "engaging" ? (Math.sin(st.tick * 1.2) * 0.3 + 0.7) : 0.5;
+    const glow = ctx.createRadialGradient(cx, cy, size * 0.5, cx, cy, size * 1.8);
+    glow.addColorStop(0, hexA(tc, 0.35 * pulse));
+    glow.addColorStop(1, hexA(tc, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 单位主体：NATO风格符号
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // 阴影
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 1;
+
+  // 填充
+  const fillGrad = ctx.createLinearGradient(0, -size, 0, size);
+  fillGrad.addColorStop(0, hexA(sideColor, 0.85));
+  fillGrad.addColorStop(1, hexA(sideColor, 0.55));
+  ctx.fillStyle = fillGrad;
+
+  // 按兵种绘制形状
+  ctx.beginPath();
+  if (u.kind === "infantry") {
+    // 步兵：菱形
+    ctx.moveTo(0, -size);
+    ctx.lineTo(size * 0.85, 0);
+    ctx.lineTo(0, size);
+    ctx.lineTo(-size * 0.85, 0);
+  } else if (u.kind === "armor") {
+    // 装甲：方形（圆角）
+    const r = size * 0.2;
+    ctx.moveTo(-size * 0.8 + r, -size * 0.7);
+    ctx.lineTo(size * 0.8 - r, -size * 0.7);
+    ctx.quadraticCurveTo(size * 0.8, -size * 0.7, size * 0.8, -size * 0.7 + r);
+    ctx.lineTo(size * 0.8, size * 0.7 - r);
+    ctx.quadraticCurveTo(size * 0.8, size * 0.7, size * 0.8 - r, size * 0.7);
+    ctx.lineTo(-size * 0.8 + r, size * 0.7);
+    ctx.quadraticCurveTo(-size * 0.8, size * 0.7, -size * 0.8, size * 0.7 - r);
+    ctx.lineTo(-size * 0.8, -size * 0.7 + r);
+    ctx.quadraticCurveTo(-size * 0.8, -size * 0.7, -size * 0.8 + r, -size * 0.7);
+  } else if (u.kind === "artillery") {
+    // 炮兵：圆形
+    ctx.arc(0, 0, size * 0.8, 0, Math.PI * 2);
+  } else if (u.kind === "recon") {
+    // 侦察：三角形
+    ctx.moveTo(0, -size * 0.9);
+    ctx.lineTo(size * 0.85, size * 0.7);
+    ctx.lineTo(-size * 0.85, size * 0.7);
+  } else {
+    // 默认：六边形
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 3 * i - Math.PI / 6;
+      const x = Math.cos(a) * size * 0.8, y = Math.sin(a) * size * 0.8;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+
+  // 白色边框
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = 1.3;
+  ctx.stroke();
+
+  // 内部兵种符号（白色细线）
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 1.2;
+  if (u.kind === "infantry") {
+    // 步兵：X交叉
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.3, -size * 0.3);
+    ctx.lineTo(size * 0.3, size * 0.3);
+    ctx.moveTo(size * 0.3, -size * 0.3);
+    ctx.lineTo(-size * 0.3, size * 0.3);
+    ctx.stroke();
+  } else if (u.kind === "armor") {
+    // 装甲：椭圆（履带感）
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size * 0.4, size * 0.2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (u.kind === "artillery") {
+    // 炮兵：圆点
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (u.kind === "recon") {
+    // 侦察：眼睛点
+    ctx.beginPath();
+    ctx.arc(0, size * 0.1, size * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 兵力条（精致渐变）
+  const s = Math.max(0, Math.min(100, u.strength || 0));
+  const barW = cs * 0.7, barH = 3;
+  const bx = cx - barW / 2, by = cy + cs * 0.42;
+  // 背景
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(bx - 0.5, by - 0.5, barW + 1, barH + 1);
+  // 渐变兵力
+  const barColor = s > 60 ? "#46c98d" : s > 30 ? "#e2a336" : "#e5484d";
+  const barGrad = ctx.createLinearGradient(bx, by, bx + barW, by);
+  barGrad.addColorStop(0, hexA(barColor, 0.9));
+  barGrad.addColorStop(1, barColor);
+  ctx.fillStyle = barGrad;
+  ctx.fillRect(bx, by, barW * s / 100, barH);
+
+  // 被压制：红色脉冲外框
+  if (u.suppressed > 0) {
+    const pulse = Math.sin(st.tick * 2) * 0.3 + 0.7;
+    ctx.strokeStyle = hexA("#ff5d5d", pulse);
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 2]);
+    ctx.strokeRect(cx - size * 1.1, cy - size * 1.1, size * 2.2, size * 2.2);
+    ctx.setLineDash([]);
+  }
+
+  // 士气濒崩：暗红罩
+  if (u.morale !== undefined && u.morale < 25 && u.morale_state !== "steady") {
+    ctx.fillStyle = "rgba(229,72,77,0.25)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 疲劳警示：顶部三角
+  if (u.fatigue !== undefined && u.fatigue > 60) {
+    ctx.fillStyle = "rgba(226,163,54,0.9)";
+    ctx.beginPath();
+    ctx.moveTo(cx + size * 0.7, cy - size * 1.1);
+    ctx.lineTo(cx + size * 0.95, cy - size * 1.1);
+    ctx.lineTo(cx + size * 0.82, cy - size * 0.85);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 筑垒标记
+  if (u.entrenched) {
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.5, cy - size * 1.05);
+    ctx.lineTo(cx + size * 0.5, cy - size * 1.05);
+    ctx.stroke();
+  }
+
+  // 朝向指示箭头（facing = 最近移动/接战方向）
+  if (u.facing && (u.facing[0] !== 0 || u.facing[1] !== 0)) {
+    const fx = u.facing[0], fy = u.facing[1];
+    const flen = Math.sqrt(fx * fx + fy * fy) || 1;
+    const nx = fx / flen, ny = fy / flen;
+    const arrowLen = size * 0.7;
+    const ex = cx + nx * arrowLen, ey = cy + ny * arrowLen;
+    const isEngaging = tacticalMap && tacticalMap[u.id] === "engaging";
+    const arrowColor = isEngaging ? "rgba(255,90,90,0.85)" : `${sideColor}cc`;
+    ctx.strokeStyle = arrowColor;
+    ctx.lineWidth = isEngaging ? 2 : 1.5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx + nx * size * 0.35, cy + ny * size * 0.35);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    // 箭头头部
+    const headLen = size * 0.2;
+    const ang = Math.atan2(ny, nx);
+    ctx.fillStyle = arrowColor;
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - Math.cos(ang - 0.5) * headLen, ey - Math.sin(ang - 0.5) * headLen);
+    ctx.lineTo(ex - Math.cos(ang + 0.5) * headLen, ey - Math.sin(ang + 0.5) * headLen);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // === v0.9.7 新因素状态指示 ===
+  // 指挥官标记：金色星标
+  if (u.is_commander) {
+    ctx.fillStyle = "#ffd700";
+    ctx.shadowColor = "rgba(255,215,0,0.8)";
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    const sx = cx - size * 0.9, sy = cy - size * 0.9;
+    for (let i = 0; i < 5; i++) {
+      const a = (Math.PI * 2 / 5) * i - Math.PI / 2;
+      const r = i % 2 === 0 ? size * 0.25 : size * 0.12;
+      const px = sx + Math.cos(a) * r;
+      const py = sy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // 伪装状态：虚线边框+半透明
+  if (u.camouflaged) {
+    ctx.strokeStyle = "rgba(150,200,150,0.7)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 1.05, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 补给线切断：红色警告
+  if (u.supply_line_cut) {
+    const pulse = Math.sin(st.tick * 3) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(255,80,80,${pulse})`;
+    ctx.font = `bold ${Math.max(8, size * 0.5)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText("⚠", cx + size * 0.9, cy - size * 0.9);
+  }
+
+  // 超出指挥范围：橙色感叹号
+  if (u.in_command === false && !u.is_commander) {
+    ctx.fillStyle = "rgba(255,170,50,0.9)";
+    ctx.font = `bold ${Math.max(8, size * 0.45)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText("!", cx - size * 0.9, cy - size * 0.9);
+  }
+
+  // 经验等级：右下角小标记
+  if (u.exp_level && u.exp_level !== "green") {
+    const expColor = u.exp_level === "elite" ? "#ffd700" : u.exp_level === "veteran" ? "#57d99b" : "#7dd3fc";
+    ctx.fillStyle = expColor;
+    ctx.beginPath();
+    ctx.arc(cx + size * 0.7, cy + size * 0.7, size * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 行军队形：移动箭头指示
+  if (u.formation === "march" && u.order) {
+    ctx.fillStyle = "rgba(255,200,100,0.8)";
+    ctx.font = `${Math.max(7, size * 0.4)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText("→", cx, cy - size * 1.2);
+  }
+}
+
+// ===== 战斗特效系统 =====
+function spawnEffect(type, x, y, opts = {}) {
+  S.effects.push({
+    type, x, y,
+    start: performance.now(),
+    duration: opts.duration || 800,
+    color: opts.color || "#ff7a45",
+    size: opts.size || 1,
+    fromX: opts.fromX, fromY: opts.fromY,
+  });
+  // 限制特效数量，避免内存膨胀
+  if (S.effects.length > 60) S.effects.shift();
+}
+
+// ===== 战斗音效系统（Web Audio API 程序化生成，无需外部文件）=====
+function initAudio() {
+  if (S.audio.ctx) return;
+  try {
+    S.audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) { S.audio.enabled = false; }
+}
+
+function playSound(type) {
+  if (!S.audio.enabled) return;
+  initAudio();
+  if (!S.audio.ctx) return;
+  const ctx = S.audio.ctx;
+  if (ctx.state === "suspended") ctx.resume();
+  const now = ctx.currentTime;
+  // 节流：同类音效最小间隔
+  const minInterval = { explosion: 120, artillery: 200, gunfire: 60, message: 80, destroyed: 300 }[type] || 100;
+  const last = S.audio.lastPlay[type] || 0;
+  if (performance.now() - last < minInterval) return;
+  S.audio.lastPlay[type] = performance.now();
+  const vol = S.audio.volume;
+
+  if (type === "explosion" || type === "artillery") {
+    // 爆炸：白噪声 burst + 低频轰鸣
+    const dur = type === "artillery" ? 0.6 : 0.4;
+    // 噪声
+    const bufSize = ctx.sampleRate * dur;
+    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 2);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const nf = ctx.createBiquadFilter();
+    nf.type = "lowpass";
+    nf.frequency.setValueAtTime(type === "artillery" ? 800 : 1200, now);
+    nf.frequency.exponentialRampToValueAtTime(100, now + dur);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(vol * 0.5, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    noise.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+    noise.start(now); noise.stop(now + dur);
+    // 低频轰鸣
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(type === "artillery" ? 80 : 120, now);
+    osc.frequency.exponentialRampToValueAtTime(30, now + dur * 0.8);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(vol * 0.4, now);
+    og.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(og); og.connect(ctx.destination);
+    osc.start(now); osc.stop(now + dur);
+  } else if (type === "gunfire") {
+    // 枪声：短促高频脉冲
+    const dur = 0.08;
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(800 + Math.random() * 400, now);
+    osc.frequency.exponentialRampToValueAtTime(200, now + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol * 0.15, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(now); osc.stop(now + dur);
+  } else if (type === "message") {
+    // 消息提示：短促"嘀"
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(1200, now);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol * 0.1, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(now); osc.stop(now + 0.08);
+  } else if (type === "destroyed") {
+    // 单位全损：低沉下行
+    const dur = 0.5;
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol * 0.25, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(now); osc.stop(now + dur);
+  }
+}
+
+function _renderEffects(ctx, ox, oy, cs, st) {
+  const now = performance.now();
+  const alive = [];
+  for (const ef of S.effects) {
+    const age = now - ef.start;
+    if (age > ef.duration) continue;
+    alive.push(ef);
+    const t = age / ef.duration; // 0~1
+    const px = ox + ef.x * cs + cs / 2;
+    const py = oy + ef.y * cs + cs / 2;
+
+    if (ef.type === "explosion") {
+      // 爆炸：径向渐变闪光 + 扩散圈
+      const r = cs * (0.3 + t * 1.2) * ef.size;
+      const alpha = (1 - t) * 0.8;
+      // 闪光
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, `rgba(255,240,180,${alpha})`);
+      g.addColorStop(0.3, `rgba(255,140,50,${alpha * 0.8})`);
+      g.addColorStop(0.7, `rgba(200,60,30,${alpha * 0.4})`);
+      g.addColorStop(1, "rgba(100,20,10,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+      // 扩散圈
+      ctx.strokeStyle = `rgba(255,180,80,${(1 - t) * 0.6})`;
+      ctx.lineWidth = 2 * (1 - t);
+      ctx.beginPath(); ctx.arc(px, py, r * 0.8, 0, Math.PI * 2); ctx.stroke();
+    } else if (ef.type === "bigExplosion") {
+      // 大爆炸（单位全损）：更大更亮 + 烟雾
+      const r = cs * (0.5 + t * 2) * ef.size;
+      const alpha = (1 - t) * 0.9;
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, `rgba(255,255,220,${alpha})`);
+      g.addColorStop(0.2, `rgba(255,180,60,${alpha * 0.9})`);
+      g.addColorStop(0.5, `rgba(220,80,30,${alpha * 0.6})`);
+      g.addColorStop(0.8, `rgba(80,30,20,${alpha * 0.3})`);
+      g.addColorStop(1, "rgba(30,10,5,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+      // 碎片
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2 + ef.start * 0.001;
+        const dist = r * 0.7 * (0.5 + t * 0.5);
+        ctx.fillStyle = `rgba(255,200,100,${(1 - t) * 0.7})`;
+        ctx.beginPath();
+        ctx.arc(px + Math.cos(ang) * dist, py + Math.sin(ang) * dist, cs * 0.06 * (1 - t), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (ef.type === "fireline") {
+      // 火力线：从from到目标的虚线
+      if (ef.fromX === undefined) continue;
+      const fx = ox + ef.fromX * cs + cs / 2;
+      const fy = oy + ef.fromY * cs + cs / 2;
+      const alpha = (1 - t) * 0.7;
+      ctx.strokeStyle = `rgba(255,200,80,${alpha})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // 命中点闪光
+      ctx.fillStyle = `rgba(255,220,120,${alpha})`;
+      ctx.beginPath(); ctx.arc(px, py, cs * 0.12 * (1 - t * 0.5), 0, Math.PI * 2); ctx.fill();
+    } else if (ef.type === "artillery") {
+      // 炮击弹道：抛物线 + 弹丸 + 落点爆炸
+      if (ef.fromX === undefined) continue;
+      const fx = ox + ef.fromX * cs + cs / 2;
+      const fy = oy + ef.fromY * cs + cs / 2;
+      const dist = Math.sqrt((px - fx) ** 2 + (py - fy) ** 2);
+      const arcH = Math.min(cs * 2.5, dist * 0.5); // 弹道高度
+      // 弹道轨迹（虚线，渐隐）
+      ctx.strokeStyle = `rgba(255,180,80,${(1 - t) * 0.35})`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      for (let i = 0; i <= 20; i++) {
+        const lt = i / 20;
+        const lx = fx + (px - fx) * lt;
+        const ly = fy + (py - fy) * lt - 4 * arcH * lt * (1 - lt);
+        if (i === 0) ctx.moveTo(lx, ly); else ctx.lineTo(lx, ly);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // 弹丸位置（前70%时间飞行，后30%爆炸）
+      if (t < 0.7) {
+        const ft = t / 0.7;
+        const bx = fx + (px - fx) * ft;
+        const by = fy + (py - fy) * ft - 4 * arcH * ft * (1 - ft);
+        // 弹丸发光
+        const bg = ctx.createRadialGradient(bx, by, 0, bx, by, cs * 0.15);
+        bg.addColorStop(0, "rgba(255,240,180,0.95)");
+        bg.addColorStop(0.5, "rgba(255,160,60,0.6)");
+        bg.addColorStop(1, "rgba(255,100,30,0)");
+        ctx.fillStyle = bg;
+        ctx.beginPath(); ctx.arc(bx, by, cs * 0.15, 0, Math.PI * 2); ctx.fill();
+        // 弹丸尾迹
+        ctx.strokeStyle = "rgba(255,180,80,0.4)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        const tx2 = fx + (px - fx) * Math.max(0, ft - 0.15);
+        const ty2 = fy + (py - fy) * Math.max(0, ft - 0.15) - 4 * arcH * Math.max(0, ft - 0.15) * (1 - Math.max(0, ft - 0.15));
+        ctx.moveTo(tx2, ty2); ctx.lineTo(bx, by);
+        ctx.stroke();
+      } else {
+        // 落点爆炸
+        const et = (t - 0.7) / 0.3;
+        const r = cs * (0.3 + et * 1.5) * (ef.size || 1);
+        const alpha = (1 - et) * 0.9;
+        const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+        g.addColorStop(0, `rgba(255,250,200,${alpha})`);
+        g.addColorStop(0.3, `rgba(255,160,60,${alpha * 0.85})`);
+        g.addColorStop(0.7, `rgba(200,70,30,${alpha * 0.5})`);
+        g.addColorStop(1, "rgba(80,20,10,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+        // 扩散圈
+        ctx.strokeStyle = `rgba(255,180,80,${(1 - et) * 0.7})`;
+        ctx.lineWidth = 2 * (1 - et);
+        ctx.beginPath(); ctx.arc(px, py, r * 0.7, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+  }
+  S.effects = alive;
+}
+
+// 战术Agent决策气泡渲染
+function _renderDecisionBubbles(ctx, ox, oy, cs) {
+  const now = performance.now();
+  const alive = [];
+  for (const b of S.decisionBubbles) {
+    const age = now - b.start;
+    if (age > b.duration) continue;
+    alive.push(b);
+    const t = age / b.duration;
+    const rp = S.unitRenderPos[b.unit_id];
+    const bx = rp ? rp.px : (ox + b.x * cs);
+    const by = rp ? rp.py : (oy + b.y * cs);
+    const cx = bx + cs / 2;
+    // 气泡向上浮动
+    const floatY = by - cs * 0.5 - t * cs * 0.4;
+    const alpha = t < 0.15 ? t / 0.15 : (t > 0.7 ? (1 - t) / 0.3 : 1);
+    const bColor = color(b.side);
+    // 气泡背景
+    ctx.font = "600 10px 'JetBrains Mono', monospace";
+    const tw = ctx.measureText(b.text).width;
+    const bw = tw + 14, bh = 20;
+    const bxp = cx - bw / 2, byp = floatY - bh;
+    ctx.fillStyle = `rgba(8,16,12,${0.88 * alpha})`;
+    roundRect(ctx, bxp, byp, bw, bh, 4);
+    ctx.fill();
+    ctx.strokeStyle = hexA(bColor, 0.7 * alpha);
+    ctx.lineWidth = 1;
+    roundRect(ctx, bxp, byp, bw, bh, 4);
+    ctx.stroke();
+    // 气泡小三角
+    ctx.fillStyle = `rgba(8,16,12,${0.88 * alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(cx - 4, byp + bh);
+    ctx.lineTo(cx + 4, byp + bh);
+    ctx.lineTo(cx, byp + bh + 5);
+    ctx.closePath();
+    ctx.fill();
+    // 文字
+    ctx.fillStyle = hexA(bColor, alpha);
+    ctx.fillText(b.text, bxp + 7, byp + 14);
+  }
+  S.decisionBubbles = alive;
+}
+
+function _drawGhostUnit(ctx, u, px, py, cs) {
+  // 情报幽灵单位：虚线框 + ?
+  const cx = px + cs / 2, cy = py + cs / 2;
+  const size = cs * 0.35;
+  ctx.globalAlpha = u.age > 8 ? 0.3 : 0.6;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = color(u.side);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(cx - size, cy - size * 0.7, size * 2, size * 1.4);
+  ctx.setLineDash([]);
+  ctx.fillStyle = color(u.side);
+  ctx.font = `${Math.max(9, Math.floor(cs * 0.3))}px sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("?", cx, cy);
+  ctx.globalAlpha = 1;
+}
+
+// drawMap 的 requestAnimationFrame 节流（性能优化：合并频繁调用）
+let _drawRaf = null;
+function scheduleDraw() {
+  if (_drawRaf) return;
+  _drawRaf = requestAnimationFrame(() => {
+    _drawRaf = null;
+    _drawMapImmediate();
+  });
+}
+
+// 智能动画循环：有单位移动或特效时持续重绘，否则停止（性能优化）
+let _animLoop = null;
+function _hasAnimation() {
+  if (S.effects.length > 0) return true;
+  if (S.cam.anim) return true;
+  if (S.decisionBubbles.length > 0) return true;
+  const st = S.state;
+  if (!st) return false;
+  // 检查是否有单位渲染位置≠目标位置
+  for (const key in S.unitRenderPos) {
+    const rp = S.unitRenderPos[key];
+    // 简单检查：渲染位置是否在变化（通过上一帧记录）
+    if (rp._lastPx !== undefined && Math.abs(rp.px - rp._lastPx) > 0.1) return true;
+  }
+  return false;
+}
+function startAnimLoop() {
+  if (_animLoop) return;
+  const tick = () => {
+    _drawMapImmediate();
+    // 记录上一帧位置用于判断是否在移动
+    for (const key in S.unitRenderPos) {
+      const rp = S.unitRenderPos[key];
+      rp._lastPx = rp.px;
+      rp._lastPy = rp.py;
+    }
+    if (_hasAnimation()) {
+      _animLoop = requestAnimationFrame(tick);
+    } else {
+      _animLoop = null;
+    }
+  };
+  _animLoop = requestAnimationFrame(tick);
+}
+function _drawMapImmediate() {
+  _updateZoomAnim();
   const st = S.state;
   if (!st) return;
   const c = els["map"], wrap = c.parentElement;
@@ -1445,7 +2697,6 @@ function drawMap() {
   }
   const ctx = c.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cw, ch);
 
   const baseCs = Math.min(cw / st.w, ch / st.h);
   const zoom = S.cam.scale;
@@ -1457,29 +2708,63 @@ function drawMap() {
   S.cam.view = { cs, ox, oy, base: baseCs, cw, ch };
   els["zoom-label"].textContent = Math.round(zoom * 100) + "%";
 
-  for (let y = 0; y < st.h; y++) {
-    for (let x = 0; x < st.w; x++) {
-      ctx.fillStyle = TERR_COLOR[st.map[y][x]] || TERR_COLOR["."];
-      ctx.fillRect(ox + x * cs, oy + y * cs, cs + 0.5, cs + 0.5);
+  // 清空
+  ctx.fillStyle = "#0d1117";
+  ctx.fillRect(0, 0, cw, ch);
+
+  // 地形层（离屏缓存，性能优化核心）
+  const terrain = _getTerrainLayer(st, cs);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(terrain, ox, oy, cW, cH);
+
+  // 战术网格（仅缩放>1.2时显示，减少绘制）
+  if (zoom > 1.2) {
+    ctx.strokeStyle = "rgba(100,140,100,0.08)";
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (let x = 0; x <= st.w; x++) {
+      ctx.moveTo(ox + x * cs, oy);
+      ctx.lineTo(ox + x * cs, oy + st.h * cs);
+    }
+    for (let y = 0; y <= st.h; y++) {
+      ctx.moveTo(ox, oy + y * cs);
+      ctx.lineTo(ox + st.w * cs, oy + y * cs);
+    }
+    ctx.stroke();
+  }
+
+  // 补给站/目标点（精致标记）
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const d of (st.depots || [])) {
+    const dx = ox + d.x * cs + cs / 2, dy = oy + d.y * cs + cs / 2;
+    const dc = (S.factions.includes(d.owner) && color(d.owner)) ? color(d.owner) : "#ffffff";
+    // 光环
+    const dg = ctx.createRadialGradient(dx, dy, 0, dx, dy, cs * 0.5);
+    dg.addColorStop(0, hexA(dc, 0.4));
+    dg.addColorStop(1, hexA(dc, 0));
+    ctx.fillStyle = dg;
+    ctx.beginPath(); ctx.arc(dx, dy, cs * 0.5, 0, Math.PI * 2); ctx.fill();
+    // 菱形标记
+    ctx.fillStyle = dc;
+    ctx.beginPath();
+    ctx.moveTo(dx, dy - cs * 0.18);
+    ctx.lineTo(dx + cs * 0.15, dy);
+    ctx.lineTo(dx, dy + cs * 0.18);
+    ctx.lineTo(dx - cs * 0.15, dy);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  // 战术Agent状态映射
+  const tacticalMap = {};
+  for (const f of S.factions) {
+    for (const t of ((st.camps[f] || {}).tactical || [])) {
+      tacticalMap[t.unit_id] = t.state;
     }
   }
-  ctx.strokeStyle = "rgba(255,255,255,0.03)";
-  ctx.lineWidth = 1;
-  for (let x = 0; x <= st.w; x++) {
-    ctx.beginPath(); ctx.moveTo(ox + x * cs, oy); ctx.lineTo(ox + x * cs, oy + st.h * cs); ctx.stroke();
-  }
-  for (let y = 0; y <= st.h; y++) {
-    ctx.beginPath(); ctx.moveTo(ox, oy + y * cs); ctx.lineTo(ox + st.w * cs, oy + y * cs); ctx.stroke();
-  }
 
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.font = `${Math.max(10, Math.floor(cs * 0.4))}px sans-serif`;
-  for (const d of (st.depots || [])) {
-    ctx.fillStyle = (S.factions.includes(d.owner) && color(d.owner))
-      ? hexA(color(d.owner), .7) : "rgba(255,255,255,.3)";
-    ctx.fillText("◆", ox + d.x * cs + cs / 2, oy + d.y * cs + cs / 2);
-  }
-
+  // 收集单位
   let units = [];
   if (S.view === "director") {
     units = S.factions.flatMap((f) => (st.camps[f] || {}).units || []);
@@ -1491,36 +2776,154 @@ function drawMap() {
       units.push({ id: i.unit_id, side: owner, kind: i.kind, x: i.x, y: i.y, ghost: true, age: st.tick - i.tick });
     }
   }
+
+  // 绘制单位（按y排序，模拟深度 + 移动平滑插值）
+  units.sort((a, b) => a.y - b.y);
+  const lerp = (a, b, t) => a + (b - a) * t;
   for (const u of units) {
-    const px = ox + u.x * cs, py = oy + u.y * cs;
-    const bw = cs * 0.74, bh = cs * 0.56;
-    const bx = px + (cs - bw) / 2, by = py + (cs - bh) / 2 - cs * 0.04;
-    ctx.font = `${Math.max(9, Math.floor(cs * 0.38))}px sans-serif`;
+    const targetPx = ox + u.x * cs, targetPy = oy + u.y * cs;
+    const key = u.id || ("ghost_" + u.x + "_" + u.y);
+    let rp = S.unitRenderPos[key];
+    if (!rp) {
+      rp = { px: targetPx, py: targetPy };
+      S.unitRenderPos[key] = rp;
+    }
+    // 平滑插值：每帧移动15%的距离，快速响应但流畅
+    const smooth = 0.18;
+    rp.px = lerp(rp.px, targetPx, smooth);
+    rp.py = lerp(rp.py, targetPy, smooth);
+    // 距离过远时直接对齐（避免重置后缓慢漂移）
+    if (Math.abs(rp.px - targetPx) > cs * 3 || Math.abs(rp.py - targetPy) > cs * 3) {
+      rp.px = targetPx; rp.py = targetPy;
+    }
     if (u.ghost) {
-      ctx.globalAlpha = u.age > 8 ? 0.35 : 0.7;
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = color(u.side); ctx.lineWidth = 1.2;
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.setLineDash([]);
-      ctx.fillStyle = color(u.side);
-      ctx.fillText("?", px + cs / 2, py + cs / 2 - cs * 0.02);
-      ctx.globalAlpha = 1;
+      _drawGhostUnit(ctx, u, rp.px, rp.py, cs);
     } else {
-      ctx.fillStyle = "rgba(10,14,19,0.85)";
-      roundRect(ctx, bx, by, bw, bh, 3); ctx.fill();
-      ctx.strokeStyle = color(u.side); ctx.lineWidth = 1.4;
-      roundRect(ctx, bx, by, bw, bh, 3); ctx.stroke();
-      ctx.fillStyle = color(u.side);
-      ctx.fillText(GLYPH[u.kind] || "?", px + cs / 2, py + cs / 2 - cs * 0.04);
-      const s = Math.max(0, Math.min(100, u.strength));
-      ctx.fillStyle = s > 60 ? "#46c98d" : s > 30 ? "#e2a336" : "#e5484d";
-      ctx.fillRect(bx + 1, by + bh + 2, (bw - 2) * s / 100, 2.5);
-      if (u.entrenched) {
-        ctx.fillStyle = "rgba(255,255,255,0.55)";
-        ctx.fillRect(px + cs / 2 - 1.5, by - 4, 3, 3);
-      }
+      _drawUnitIcon(ctx, u, rp.px, rp.py, cs, st, tacticalMap);
     }
   }
+
+  // 战斗特效（在单位之上，夜间覆盖层之下）
+  _renderEffects(ctx, ox, oy, cs, st);
+
+  // 选中单位高亮框（脉冲+四角装饰）
+  if (S.selectedUnit) {
+    for (const u of units) {
+      if (u.id !== S.selectedUnit) continue;
+      const rp = S.unitRenderPos[u.id];
+      const spx = rp ? rp.px : (ox + u.x * cs);
+      const spy = rp ? rp.py : (oy + u.y * cs);
+      const scx = spx + cs / 2, scy = spy + cs / 2;
+      const pulse = Math.sin(performance.now() * 0.005) * 0.3 + 0.7;
+      const selColor = color(u.side);
+      const boxSize = cs * 0.55;
+      // 外发光
+      const glow = ctx.createRadialGradient(scx, scy, 0, scx, scy, cs * 0.9);
+      glow.addColorStop(0, hexA(selColor, 0.25 * pulse));
+      glow.addColorStop(1, hexA(selColor, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(scx, scy, cs * 0.9, 0, Math.PI * 2); ctx.fill();
+      // 矩形框
+      ctx.strokeStyle = hexA(selColor, 0.8 + 0.2 * pulse);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(scx - boxSize, scy - boxSize, boxSize * 2, boxSize * 2);
+      ctx.setLineDash([]);
+      // 四角装饰
+      const cLen = cs * 0.18;
+      ctx.strokeStyle = selColor;
+      ctx.lineWidth = 2.5;
+      const corners = [
+        [scx - boxSize, scy - boxSize, 1, 1],
+        [scx + boxSize, scy - boxSize, -1, 1],
+        [scx - boxSize, scy + boxSize, 1, -1],
+        [scx + boxSize, scy + boxSize, -1, -1],
+      ];
+      for (const [cx, cy, dx, dy] of corners) {
+        ctx.beginPath();
+        ctx.moveTo(cx + dx * cLen, cy);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx, cy + dy * cLen);
+        ctx.stroke();
+      }
+      // 单位名称标签
+      const label = u.name || u.id;
+      ctx.font = "600 11px 'JetBrains Mono', monospace";
+      const tw = ctx.measureText(label).width;
+      const lx = scx - tw / 2 - 6, ly = scy - boxSize - 22;
+      ctx.fillStyle = "rgba(10,18,14,0.9)";
+      ctx.fillRect(lx, ly, tw + 12, 18);
+      ctx.strokeStyle = hexA(selColor, 0.6);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lx, ly, tw + 12, 18);
+      ctx.fillStyle = selColor;
+      ctx.fillText(label, lx + 6, ly + 13);
+      break;
+    }
+  }
+
+  // 战术Agent决策气泡
+  _renderDecisionBubbles(ctx, ox, oy, cs);
+
+  // 视角切换扫描线过渡（军事风格）
+  if (S.viewFlash) {
+    const vfAge = performance.now() - S.viewFlash.start;
+    const vfDur = 600;
+    if (vfAge < vfDur) {
+      const vft = vfAge / vfDur;
+      const scanY = vft * ch;
+      // 扫描线发光
+      const sg = ctx.createLinearGradient(0, scanY - 30, 0, scanY + 30);
+      sg.addColorStop(0, "rgba(80,200,255,0)");
+      sg.addColorStop(0.5, "rgba(100,220,255,0.25)");
+      sg.addColorStop(1, "rgba(80,200,255,0)");
+      ctx.fillStyle = sg;
+      ctx.fillRect(0, scanY - 30, cw, 60);
+      // 扫描线亮边
+      ctx.strokeStyle = `rgba(140,230,255,${0.6 * (1 - vft)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, scanY); ctx.lineTo(cw, scanY); ctx.stroke();
+      // 整体淡入（前30%暗，之后渐亮）
+      if (vft < 0.3) {
+        ctx.fillStyle = `rgba(0,10,20,${0.5 * (1 - vft / 0.3)})`;
+        ctx.fillRect(0, 0, cw, ch);
+      }
+    } else {
+      S.viewFlash = null;
+    }
+  }
+
+  // 夜间覆盖层：整体暗化 + 单位微光 + 扫描线
+  if (st.period === "night") {
+    ctx.fillStyle = "rgba(5,10,25,0.45)";
+    ctx.fillRect(0, 0, cw, ch);
+    // 单位微光（在暗化层之上重新绘制发光）
+    for (const u of units) {
+      if (u.ghost) continue;
+      const cx = ox + u.x * cs + cs / 2, cy = oy + u.y * cs + cs / 2;
+      const ug = ctx.createRadialGradient(cx, cy, 0, cx, cy, cs * 0.6);
+      ug.addColorStop(0, hexA(color(u.side), 0.15));
+      ug.addColorStop(1, hexA(color(u.side), 0));
+      ctx.fillStyle = ug;
+      ctx.beginPath(); ctx.arc(cx, cy, cs * 0.6, 0, Math.PI * 2); ctx.fill();
+    }
+    // 扫描线
+    ctx.fillStyle = "rgba(0,0,0,0.08)";
+    for (let y = 0; y < ch; y += 3) {
+      ctx.fillRect(0, y, cw, 1);
+    }
+  } else if (st.period === "dusk") {
+    // 黄昏：暖色滤镜
+    ctx.fillStyle = "rgba(60,35,15,0.18)";
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
+  // 暗角（Vignette）增强沉浸感
+  const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * 0.3, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(0,0,0,0.35)");
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, cw, ch);
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -1536,23 +2939,91 @@ function roundRect(ctx, x, y, w, h, r) {
 // ---------- 消息流 ----------
 function addFeed(e) {
   if (S.filter && (e.kind || e.type) !== S.filter) return;
+  if (e.kind === "order" || e.kind === "escalation") playSound("message");
   const meta = KIND_META[e.kind] || ["消息", "#7c8a98"];
   const src = e.director ? "导演部" : (S.sideNames[e.camp] || e.camp || "");
   const div = document.createElement("div");
   div.className = `fi k-${e.kind}${e.director ? " dir" : ""}`;
   div.dataset.kind = e.kind;
+  const hasBody = !!(e.body || e.subject);
   div.innerHTML = `
     <div class="fi-head"><span class="ft">T${String(e.t).padStart(3, "0")}</span>
       <span class="fcamp dir-src" ${e.camp ? `style="color:${color(e.camp)}"` : ""}>${esc(src.slice(0, 3))}</span>
       <span class="fk">${meta[0]}${e.director ? "·注入" : ""}</span>
-      <span class="fr">${esc(titleOf(e.sender))} → ${esc(titleOf(e.recipient))}</span></div>
+      <span class="fr">${esc(titleOf(e.sender))} → ${esc(titleOf(e.recipient))}</span>
+      ${hasBody ? '<span class="fi-toggle">▾</span>' : ""}</div>
     ${e.subject ? `<div class="fi-sub">${esc(e.subject)}</div>` : ""}
     ${e.body ? `<div class="fi-body">${esc(e.body)}</div>` : ""}`;
+  // 点击展开/收起详情
+  if (hasBody) {
+    div.style.cursor = "pointer";
+    div.addEventListener("click", () => {
+      div.classList.toggle("expanded");
+      const toggle = div.querySelector(".fi-toggle");
+      if (toggle) toggle.textContent = div.classList.contains("expanded") ? "▴" : "▾";
+    });
+  }
   prependFeed(div);
 }
 
 function addSysFeed(e) {
   if (S.filter) return;
+  // 触发战斗特效
+  const _findUnit = (uid) => {
+    if (!S.state) return null;
+    const camps = S.state.camps || {};
+    for (const f in camps) {
+      const hit = (camps[f].units || []).find((x) => x.id === uid);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  if (e.type === "combat") {
+    const hit = _findUnit(e.unit);
+    if (hit) spawnEffect("explosion", hit.x, hit.y, { color: "#ff7a45", size: 1.2 });
+    playSound("gunfire");
+  } else if (e.type === "destroyed") {
+    spawnEffect("bigExplosion", e.x, e.y, { color: "#ff5d5d", size: 1.5, duration: 1200 });
+    playSound("destroyed");
+  } else if (e.type === "fire") {
+    // 炮击：从炮兵位置到目标画抛物线弹道 + 落点爆炸
+    const arty = _findUnit(e.unit);
+    const tx = e.x !== undefined ? e.x : (e.target_pos ? e.target_pos[0] : 0);
+    const ty = e.y !== undefined ? e.y : (e.target_pos ? e.target_pos[1] : 0);
+    if (arty) {
+      spawnEffect("artillery", tx, ty, {
+        fromX: arty.x, fromY: arty.y, color: "#ffb347", duration: 900, size: 1.3,
+      });
+    } else {
+      spawnEffect("explosion", tx, ty, { color: "#ffb347", size: 1.3 });
+    }
+    playSound("artillery");
+  } else if (e.type === "tactical") {
+    // 战术Agent决策气泡
+    const u = _findUnit(e.unit);
+    if (u) {
+      const stateCN = { engaging: "接战", defending: "防御", withdrawing: "后撤",
+        advancing: "推进", holding: "待命", resting: "休整", reorganizing: "重组" }[e.state] || e.state;
+      const kindCN = { attack: "攻击", move: "机动", hold: "固守", retreat: "撤退" }[e.kind] || e.kind;
+      S.decisionBubbles.push({
+        unit_id: e.unit, x: u.x, y: u.y,
+        text: `自主${kindCN}·${stateCN}`,
+        start: performance.now(), duration: 2500,
+        side: e.camp,
+      });
+      if (S.decisionBubbles.length > 20) S.decisionBubbles.shift();
+    }
+    if (e.kind === "attack" && e.target) {
+      const atk = _findUnit(e.unit);
+      if (atk) {
+        spawnEffect("fireline", e.target[0], e.target[1], {
+          fromX: atk.x, fromY: atk.y, color: "#ffc864", duration: 500,
+        });
+      } else {
+        spawnEffect("explosion", e.target[0], e.target[1], { color: "#ffc864", size: 0.8 });
+      }
+    }
+  }
   let sub = "", warn = false;
   if (e.type === "combat") sub = `⚔ ${e.name || e.unit} 损失 ${e.taken}（${(e.vs || []).join("、")}）`;
   else if (e.type === "fire") sub = `▲ ${e.name || e.unit} 炮击 ${e.target_name || ""}，损失 ${e.dmg}`;
@@ -1568,11 +3039,17 @@ function addSysFeed(e) {
   else if (e.type === "air") sub = `✈ 空军遮断：${e.name || e.unit} 损失 ${e.dmg}`;
   else if (e.type === "llm_fallback") sub = `⚠ LLM 降级规则：${String(e.error || "").slice(0, 60)}`;
   else if (e.type === "action") sub = `→ ${e.unit} ${e.kind}${e.target ? " (" + e.target.join(",") + ")" : ""}`;
+  else if (e.type === "tactical") {
+    const sn = { engaging: "接战", defending: "防御", withdrawing: "后撤", advancing: "推进", holding: "待命" }[e.state] || e.state;
+    sub = `◆ ${e.name || e.unit} 自主${e.kind}${e.target ? " (" + e.target.join(",") + ")" : ""} [${sn}]`;
+  }
+  else if (e.type === "tactical_rejected") sub = `◆ ${e.unit} 自主行动被拒 ${e.kind}`;
   else if (e.type === "dirscript") sub = `◈ 导演剧本触发：${(S.sideNames[e.camp] || e.camp)} → ${titleOf(e.recipient)}《${e.subject || ""}》`;
   else if (e.type === "dirscript_failed") { sub = `⚠ 剧本注入失败：${(S.sideNames[e.camp] || e.camp)} → ${titleOf(e.recipient)}`; warn = true; }
   if (!sub) return;
+  const isTactical = e.type === "tactical" || e.type === "tactical_rejected";
   const div = document.createElement("div");
-  div.className = `fi sys${warn ? " warn" : e.type === "dirscript" ? " dir" : ""}`;
+  div.className = `fi sys${warn ? " warn" : e.type === "dirscript" ? " dir" : ""}${isTactical ? " tactical" : ""}`;
   div.innerHTML = `<div class="fi-head"><span class="ft">T${String(e.t).padStart(3, "0")}</span>
     <span class="fcamp">${e.camp ? esc((S.sideNames[e.camp] || e.camp).slice(0, 2)) : ""}</span>
     <span class="fr mono">${esc(sub)}</span></div>`;
@@ -1854,4 +3331,19 @@ async function renderDebugTab(pos, tab) {
         : `<div class="dbg-empty2">当前策略为规则模式，无 LLM 调用记录（在设置中配置 LLM 并选「智能决策」后出现）</div>`;
     } catch (e) { content.innerHTML = `<div class="dbg-note">加载失败</div>`; }
   }
+}
+// 全局错误捕获（调试用）
+window.addEventListener("error", (e) => {
+  document.title = "ERR: " + e.message.slice(0, 80);
+  console.error("GLOBAL ERROR:", e.message, e.filename, e.lineno);
+});
+// 启动
+boot();
+// URL参数 ?deck=1 自动进入指挥台（用于调试/直接链接）
+if (new URLSearchParams(location.search).get("deck") === "1") {
+  setTimeout(() => {
+    const studio = document.getElementById("studio");
+    const deck = document.getElementById("deck");
+    if (studio && deck) { studio.classList.add("hidden"); deck.classList.remove("hidden"); }
+  }, 500);
 }

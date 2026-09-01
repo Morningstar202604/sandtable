@@ -41,10 +41,23 @@ class Bus:
                 raise ValueError(
                     f"[隔离拦截] {self.side} 总线拒绝非本阵营地址: {pos_id}")
         loss = float(self.friction.get("loss_rate", 0.0))
+        # 电子战干扰（ew_jamming）叠加到消息丢失率——战场电磁环境恶化通信
+        # 高优先级消息（priority<=1，如作战命令/方案）有冗余校验，干扰效果减半
+        ew = float(self.friction.get("ew_jamming", 0.0))
+        if msg.priority <= 1:
+            ew *= 0.4
+        loss += ew
+        loss = max(0.0, min(0.9, loss))
         if loss > 0 and self.rng.random() < loss:
             self.lost_count += 1
             return False
         scale = float(self.friction.get("latency_scale", 1.0))
+        # 电子战干扰同时放大通信延迟（高优先级消息有加急信道，延迟增幅减半）
+        ew_delay = float(self.friction.get("ew_jamming", 0.0))
+        if msg.priority <= 1:
+            ew_delay *= 0.5
+        if ew_delay > 0:
+            scale += ew_delay
         if scale != 1.0:
             msg.deliver_at = msg.tick + max(1, round((msg.deliver_at - msg.tick) * scale))
         self._queue.append(msg)

@@ -63,6 +63,19 @@ Intent (HQ) → Plan (staff) → Orders (army→division→regiment) → Actions
 - **AI scenario import** — paste any battle material (history article, OOB notes,
   news); an LLM classifies it into factions, units, objectives and intents, and the
   scenario becomes playable from the lobby.
+- **Tactical agents at the front line** — every combat unit is bound to a
+  lightweight tactical agent with local perception, autonomous action (engage on
+  contact, withdraw when hurt, hold in place), and asynchronous reporting. The
+  bottom of the command chain is AI-driven, not dead data.
+- **Nine battlefield factors** — day/night cycle, fatigue & rest, morale &
+  breakdown, electronic warfare, artillery suppression, supply lines (ammo/fuel/
+  rations), fog of war & camouflage, command radius, combined-arms synergy,
+  engineering & fortification, weather effects, unit experience, commander traits,
+  and march/deployment formations — all interact in the combat formula.
+- **COP-style command center UI** — modern military common operational picture
+  interface with NATO-style unit symbols, procedural terrain textures, combat
+  effects (explosions, artillery trajectories, fire lines), unit selection &
+  detail panels, hover tooltips, force-ratio bars, and day/night progress.
 
 ## Quick start
 
