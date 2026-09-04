@@ -15,7 +15,7 @@ v6 增强：
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..engine.world import Unit, World
 from ..schemas import MsgKind, WorldAction
@@ -100,8 +100,8 @@ class TacticalAgent:
 
     # ---- 决策入口 ----
     def decide(self, world: World, tick: int, tuning: dict,
-               bus: "Bus" | None = None, registry: "Registry" | None = None,
-               llm_client: "LLMClient" | None = None,
+               bus: Bus | None = None, registry: Registry | None = None,
+               llm_client: LLMClient | None = None,
                llm_interval: int = 4) -> list[WorldAction]:
         """战术决策入口。LLM 可用且到唤醒时机则用 LLM，否则走规则。"""
         self._tick = tick
@@ -123,8 +123,8 @@ class TacticalAgent:
 
     # ---- LLM 决策 ----
     def _llm_decide(self, world: World, perc: dict, tuning: dict,
-                    bus: "Bus" | None, registry: "Registry" | None,
-                    llm_client: "LLMClient") -> list[WorldAction]:
+                    bus: Bus | None, registry: Registry | None,
+                    llm_client: LLMClient) -> list[WorldAction]:
         unit = perc["unit"]
         enemy_lines = "；".join(
             f"{e['name']}({e['kind']})@{e['x']},{e['y']}兵力{e['strength']}距{e['dist']}格"
@@ -199,7 +199,7 @@ class TacticalAgent:
 
     # ---- 规则决策（确定性，离线兜底）----
     def _rule_decide(self, world: World, perc: dict, tuning: dict,
-                     bus: "Bus" | None, registry: "Registry" | None) -> list[WorldAction]:
+                     bus: Bus | None, registry: Registry | None) -> list[WorldAction]:
         unit = perc["unit"]
         enemies = perc["enemies"]
         has_order = unit.order is not None
@@ -257,7 +257,7 @@ class TacticalAgent:
             actions.append(WorldAction(kind="hold", unit=unit.id))
             self.state = "resting"
             self._maybe_report(unit, self._tick, bus, registry, tuning,
-                               f"部队疲劳，就地休整恢复。")
+                               "部队疲劳，就地休整恢复。")
             return actions
 
         # === 夜间保守：无强敌不主动接战，倾向防御 ===
@@ -356,7 +356,7 @@ class TacticalAgent:
 
     # ---- 异步上报 ----
     def _maybe_report_contact(self, unit: Unit, enemies: list[dict], tick: int,
-                              bus: "Bus" | None, registry: "Registry" | None,
+                              bus: Bus | None, registry: Registry | None,
                               perc: dict) -> None:
         if not bus or not registry:
             return
@@ -379,7 +379,7 @@ class TacticalAgent:
                            "tactical_state": self.state})
 
     def _report_escalation(self, unit: Unit, enemies: list[dict], tick: int,
-                           bus: "Bus" | None, registry: "Registry" | None,
+                           bus: Bus | None, registry: Registry | None,
                            reason: str, perc: dict) -> None:
         if not bus or not registry:
             return
@@ -394,8 +394,8 @@ class TacticalAgent:
                            "reason": reason,
                            "tactical_state": self.state}, priority=0)
 
-    def _report_reorg(self, unit: Unit, bus: "Bus" | None,
-                      registry: "Registry" | None, state: str) -> None:
+    def _report_reorg(self, unit: Unit, bus: Bus | None,
+                      registry: Registry | None, state: str) -> None:
         if not bus or not registry or not unit:
             return
         if state == "reorg":
@@ -409,7 +409,7 @@ class TacticalAgent:
                                "tactical_state": self.state})
 
     def _maybe_routine_report(self, unit: Unit, tick: int,
-                              bus: "Bus" | None, registry: "Registry" | None,
+                              bus: Bus | None, registry: Registry | None,
                               tuning: dict) -> None:
         if not bus or not registry:
             return
@@ -428,8 +428,8 @@ class TacticalAgent:
                            "supply": round(unit.supply),
                            "tactical_state": self.state})
 
-    def _maybe_report(self, unit: Unit, tick: int, bus: "Bus" | None,
-                      registry: "Registry" | None, tuning: dict, body: str) -> None:
+    def _maybe_report(self, unit: Unit, tick: int, bus: Bus | None,
+                      registry: Registry | None, tuning: dict, body: str) -> None:
         if not bus or not registry:
             return
         self.last_report_tick = tick
@@ -441,7 +441,7 @@ class TacticalAgent:
                            "tactical_state": self.state})
 
     # ---- 实际发送上报消息 ----
-    def _send_report(self, bus: "Bus", registry: "Registry", unit: Unit,
+    def _send_report(self, bus: Bus, registry: Registry, unit: Unit,
                      kind: MsgKind, subject: str, body: str,
                      data: dict, priority: int = 1) -> None:
         from ..schemas import Message
@@ -461,9 +461,9 @@ class TacticalAgent:
 
 class TacticalManager:
     """管理一个阵营所有战术Agent的容器。支持规则/LLM 两种策略。"""
-    def __init__(self, side: str, registry: "Registry", bus: "Bus",
+    def __init__(self, side: str, registry: Registry, bus: Bus,
                  tuning: dict | None = None, policy_mode: str = "rule",
-                 llm_client: "LLMClient" | None = None,
+                 llm_client: LLMClient | None = None,
                  llm_interval: int = 4) -> None:
         self.side = side
         self.registry = registry

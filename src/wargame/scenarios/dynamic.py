@@ -39,26 +39,26 @@ def make_dynamic_scenario(spec: dict):
     if len(factions) < 2:
         raise ValueError("场景至少需要两个阵营")
 
-    W = max(20, min(60, int(spec.get("width") or 30)))
-    H = max(14, min(44, int(spec.get("height") or 22)))
+    map_w = max(20, min(60, int(spec.get("width") or 30)))
+    map_h = max(14, min(44, int(spec.get("height") or 22)))
     objectives = [{"name": str(o.get("name", f"目标{i + 1}")),
-                   "x": int(o.get("x", W // 2)), "y": int(o.get("y", H // 2)),
+                   "x": int(o.get("x", map_w // 2)), "y": int(o.get("y", map_h // 2)),
                    "value": int(o.get("value", 1))}
                   for i, o in enumerate(spec.get("objectives") or [])][:12]
-    center = (W // 2, H // 2)
+    center = (map_w // 2, map_h // 2)
 
     class DynamicWorld(World):
         def __init__(self) -> None:
-            super().__init__(w=W, h=H)
-            grid = [["."] * W for _ in range(H)]
+            super().__init__(w=map_w, h=map_h)
+            grid = [["."] * map_w for _ in range(map_h)]
             for o in objectives:
                 for dx in (-1, 0):
                     x, y = o["x"] + dx, o["y"]
-                    if 0 <= x < W and 0 <= y < H:
+                    if 0 <= x < map_w and 0 <= y < map_h:
                         grid[y][x] = "C"
             # 空白开阔地形上稀疏布一些林地/丘陵，避免完全单调
-            for i in range(0, W * H // 40):
-                x, y = (i * 7) % W, (i * 13) % H
+            for i in range(0, map_w * map_h // 40):
+                x, y = (i * 7) % map_w, (i * 13) % map_h
                 if grid[y][x] == ".":
                     grid[y][x] = "f" if i % 3 else "h"
             self.grid = grid
@@ -68,7 +68,7 @@ def make_dynamic_scenario(spec: dict):
         kinds = ("infantry", "armor", "artillery", "recon")
         # 每方固定编制槽位：r1 侦察、a1/a2 炮兵、b1..b4 团——超出截断
         for fi, f in enumerate(factions):
-            x0 = 2 + fi * (W - 4) // max(1, len(factions))  # 各方沿边缘展开
+            x0 = 2 + fi * (map_w - 4) // max(1, len(factions))  # 各方沿边缘展开
             slots = [("r1", "recon"), ("a1", "artillery"), ("a2", "artillery"),
                      ("b1", "infantry"), ("b2", "armor"),
                      ("b3", "infantry"), ("b4", "infantry")]
@@ -78,16 +78,16 @@ def make_dynamic_scenario(spec: dict):
                 kind = spec_u.get("kind", default_kind)
                 kind = kind if kind in kinds else "infantry"
                 x = int(spec_u.get("x", x0 + si % 3))
-                y = int(spec_u.get("y", 2 + (si * 5 + fi * 3) % (H - 4)))
-                x = max(1, min(W - 2, x))
-                y = max(1, min(H - 2, y))
+                y = int(spec_u.get("y", 2 + (si * 5 + fi * 3) % (map_h - 4)))
+                x = max(1, min(map_w - 2, x))
+                y = max(1, min(map_h - 2, y))
                 w.add_unit(f"{f['id']}-u-{slot}", f["id"],
                            str(spec_u.get("name") or f"{f['name']}{slot}部"),
                            kind, x, y)
         for fi, f in enumerate(factions):
             # 各方补给站沿己方边缘布置
-            w.set_depot(f["id"], max(1, min(W - 2, 2 + fi * (W - 4) // max(1, len(factions)))),
-                        H - 2 - fi)
+            w.set_depot(f["id"], max(1, min(map_w - 2, 2 + fi * (map_w - 4) // max(1, len(factions)))),
+                        map_h - 2 - fi)
         return w
 
     org_titles = {f["id"]: {"army": f"{f['name']}集团军司令",
@@ -123,13 +123,13 @@ def make_dynamic_scenario(spec: dict):
         SCENARIO_NAME=str(spec.get("name") or "AI 导入场景"),
         CODENAME="AI 生成想定",
         ERA="通用 · AI 生成",
-        THEATER="生成地图 · %d×%d" % (W, H),
-        SCALE="%d 方 · %d 单位" % (len(factions), sum(len(f.get("units") or []) for f in factions)),
+        THEATER=f"生成地图 · {map_w}×{map_h}",
+        SCALE=f"{len(factions)} 方 · {sum(len(f.get('units') or []) for f in factions)} 单位",
         SCENARIO_DESC=str(spec.get("desc") or "由 AI 从提供的资料自动生成的战役想定。"),
         CAMP_NAMES=camp_names,
         FACTIONS=[{"id": f["id"], "name": f["name"]} for f in factions],
         DEFAULT_INTENTS={f["id"]: f["intent"] or "完成既定战役任务。" for f in factions},
-        RECON_TARGET={f["id"]: [max(1, W // 4), max(1, H // 4)] for f in factions},
+        RECON_TARGET={f["id"]: [max(1, map_w // 4), max(1, map_h // 4)] for f in factions},
         PLANS=_default_plans(),
         ORG_TITLES=org_titles,
         ORG_CONFIG=org_config,

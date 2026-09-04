@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import time
@@ -20,8 +21,8 @@ from .config import settings
 from .engine.world import UNIT_NAME, WEATHER_CN, World
 from .llm import llm_client
 from .org import Position, Registry, build_camp_org
-from .schemas import Message, MsgKind, WorldAction
 from .scenarios import load_scenario
+from .schemas import Message, MsgKind
 
 
 class Simulation:
@@ -533,10 +534,8 @@ class Simulation:
                             f"我部遭敌炮兵急袭，损失{e['dmg']}。",
                             {"event": "fire", "dmg": e["dmg"],
                              "x": target.x, "y": target.y})
-                        try:
+                        with contextlib.suppress(ValueError):
                             self.camps[target.side].bus.send(msg)
-                        except ValueError:
-                            pass
             elif et == "destroyed":
                 self._emit("destroyed", camp=e["side"], unit=e["unit"],
                            name=e["name"], x=e["x"], y=e["y"])
@@ -559,10 +558,8 @@ class Simulation:
             self.tick, f"unit:{unit.id}", owner.id,
             MsgKind.ESCALATION if event == "destroyed" else MsgKind.SITREP,
             subject, body, payload)
-        try:
+        with contextlib.suppress(ValueError):
             self.camps[unit.side].bus.send(msg)
-        except ValueError:
-            pass
 
     # ---- 侦察：敌情流入各自阵营（阵营间唯一信息通道）----
     def _recon(self) -> None:
@@ -582,10 +579,8 @@ class Simulation:
                     "敌情速报", body,
                     {"unit_id": s["unit_id"], "kind": s["kind"], "name": s["name"],
                      "x": s["x"], "y": s["y"], "tick": s["tick"]}, priority=0)
-                try:
+                with contextlib.suppress(ValueError):
                     camp.bus.send(msg)
-                except ValueError:
-                    pass
             self._emit("intel", camp=side, n=len(seen))
 
     # ---- 复盘指标 ----
@@ -613,7 +608,7 @@ class Simulation:
                     latencies.append(min(a["t"] for a in matches) - o["t"])
             units = self.world.side_units_view(side)
             total = sum(1 for u in self.world.units.values() if u.side == side)
-            ev_count = lambda t: sum(  # noqa: E731
+            ev_count = lambda t, side=side: sum(  # noqa: E731
                 1 for e in self.events if e["type"] == t and e.get("camp") == side)
             out["camps"][side] = {
                 "kinds": kinds,
@@ -633,7 +628,7 @@ class Simulation:
                 "strength": round(sum(u["strength"] for u in units)),
             }
         # 战役目标控制与得分（多方各计各的分）
-        score = {f: 0 for f in self.factions}
+        score = dict.fromkeys(self.factions, 0)
         for o in self.world.objectives:
             if o.get("controller") in score:
                 score[o["controller"]] += o.get("value", 1)
@@ -651,7 +646,7 @@ class Simulation:
             units = self.world.side_units_view(side)
             strength[side] = round(sum(u["strength"] for u in units))
             alive[side] = len(units)
-        score = {f: 0 for f in self.factions}
+        score = dict.fromkeys(self.factions, 0)
         for o in self.world.objectives:
             if o.get("controller") in score:
                 score[o["controller"]] += o.get("value", 1)

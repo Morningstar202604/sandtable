@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import random
-import pytest
 
 import wargame
 from wargame.battlelib import BATTLE_PRESETS, apply_battle, reset_battle

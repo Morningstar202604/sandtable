@@ -16,8 +16,8 @@ from ..org import Position, Registry
 from ..schemas import AgentDecision, Message, MsgKind
 
 if TYPE_CHECKING:
-    from ..engine.world import World
     from ..camps import Camp
+    from ..engine.world import World
 
 KIND_SHORT = {
     MsgKind.INTENT: "意图", MsgKind.ORDER: "命令", MsgKind.ACK: "确认",
@@ -36,8 +36,8 @@ class Task(BaseModel):
 class SituationView:
     """一次决策所能看到的全部信息（阵营内、指挥范围内的投影）。"""
 
-    def __init__(self, agent: "Agent", camp: "Camp", registry: Registry,
-                 world: "World", tick: int) -> None:
+    def __init__(self, agent: Agent, camp: Camp, registry: Registry,
+                 world: World, tick: int) -> None:
         self.tick = tick
         self.camp_side = camp.side
         self.registry = registry
@@ -85,7 +85,7 @@ class SituationView:
 class Policy(Protocol):
     """决策策略接口：同一位智能体可换装规则脑或 LLM 脑。"""
 
-    def decide(self, agent: "Agent", view: SituationView) -> AgentDecision: ...
+    def decide(self, agent: Agent, view: SituationView) -> AgentDecision: ...
 
 
 class Agent:
@@ -113,9 +113,7 @@ class Agent:
         if self.inbox:
             return True
         interval = int(self.tuning.get("report_interval", 8))
-        if any(t.status == "active" for t in self.tasks) and tick - self.last_active >= interval:
-            return True
-        return False
+        return any(t.status == "active" for t in self.tasks) and tick - self.last_active >= interval
 
     def decide(self, view: SituationView) -> AgentDecision:
         return self.policy.decide(self, view)

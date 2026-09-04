@@ -165,7 +165,6 @@ class LLMPolicy:
         )
 
     def _situation(self, agent: Agent, view: SituationView) -> str:
-        p = agent.position
         lines = [f"当前 T{view.tick}。"]
         if agent.tasks:
             ts = "；".join(f"[{t.status}]{t.desc}" for t in agent.tasks[-4:])

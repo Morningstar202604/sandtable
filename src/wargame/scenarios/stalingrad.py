@@ -182,13 +182,19 @@ class StalingradWorld(World):
                 grid[y][x] = "f"  # 废墟 = 树林级掩体
         # 街道网（机动走廊）
         for x in range(W):
-            if grid[7][x] == ".": grid[7][x] = "r"  # 中央大街
-            if grid[4][x] == ".": grid[4][x] = "r"  # 北街
-            if grid[10][x] == ".": grid[10][x] = "r"  # 南街
+            if grid[7][x] == ".":
+                grid[7][x] = "r"  # 中央大街
+            if grid[4][x] == ".":
+                grid[4][x] = "r"  # 北街
+            if grid[10][x] == ".":
+                grid[10][x] = "r"  # 南街
         for y in range(H):
-            if grid[y][5] == ".": grid[y][5] = "r"  # 东向第5街
-            if grid[y][10] == ".": grid[y][10] = "r"  # 东向第10街
-            if grid[y][15] == ".": grid[y][15] = "r"  # 东向第15街
+            if grid[y][5] == ".":
+                grid[y][5] = "r"  # 东向第5街
+            if grid[y][10] == ".":
+                grid[y][10] = "r"  # 东向第10街
+            if grid[y][15] == ".":
+                grid[y][15] = "r"  # 东向第15街
         # 废墟堆叠（更密集的城区）
         put([(6, 3), (7, 3), (9, 4), (10, 4), (14, 4), (15, 4),
              (6, 5), (9, 6), (14, 7), (15, 7), (16, 7),

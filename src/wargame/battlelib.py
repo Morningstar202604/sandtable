@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # 阵营层维度（两方/多方通用；每项可量化）

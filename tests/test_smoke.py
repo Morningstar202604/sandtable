@@ -118,8 +118,8 @@ def test_normandy_scenario(tmp_path):
 
 def test_dynamic_scenario_builder(tmp_path):
     """AI 场景导入：spec → 动态场景 → 可推演。"""
-    from wargame.scenarios.dynamic import make_dynamic_scenario
     from wargame.scenarios import SCENARIOS
+    from wargame.scenarios.dynamic import make_dynamic_scenario
     spec = {
         "name": "测试三方混战",
         "width": 30, "height": 22,

@@ -343,10 +343,9 @@ def create_app(policy: str = "auto", seed: int | None = None,
         # Join with battle preset briefing if available
         if _HAS_BATTLELIB:
             for bp in battlelib.BATTLE_PRESETS:
-                if bp.pid == key or bp.name and bp.name in getattr(mod, "SCENARIO_NAME", ""):
-                    if bp.briefing:
-                        info["briefing"] = bp.briefing
-                        break
+                if bp.briefing and (bp.pid == key or (bp.name and bp.name in getattr(mod, "SCENARIO_NAME", ""))):
+                    info["briefing"] = bp.briefing
+                    break
         return info
 
     @app.get("/api/scenarios")

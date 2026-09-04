@@ -1,9 +1,7 @@
 """阶段二（战役简报系统）验收测试。"""
 from __future__ import annotations
 
-import pytest
-
-from wargame.battlelib import BATTLE_PRESETS, BattlePreset
+from wargame.battlelib import BATTLE_PRESETS
 from wargame.sim import Simulation
 
 
