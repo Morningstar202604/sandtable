@@ -142,19 +142,23 @@ class BattlePreset:
     env: dict              # env 参数模板（weather + 地形密度）
     params: dict           # global knob 覆盖
     sides: list[dict]      # 按顺序作用于当前想定的各方（第 i 方 ← sides[i]）
+    briefing: str = ""     # 战役简报全文（简报屏幕 + 推演中战报用）
 
     def meta(self) -> dict:
-        return {"id": self.pid, "name": self.name, "codename": self.codename,
-                "era": self.era, "theater": self.theater, "category": self.category,
-                "desc": self.desc, "env": self.env, "params": self.params,
-                "sides": self.sides}
+        r = {"id": self.pid, "name": self.name, "codename": self.codename,
+             "era": self.era, "theater": self.theater, "category": self.category,
+             "desc": self.desc, "env": self.env, "params": self.params,
+             "sides": self.sides}
+        if self.briefing:
+            r["briefing"] = self.briefing
+        return r
 
 
 _S = lambda d: {**_SIDE_DIM_DEFAULT, **d}  # noqa: E731  d 为 {dim: 值} 覆盖缺省
 
 BATTLE_PRESETS: list[BattlePreset] = [
     # —— 两栖强攻 ——
-    BattlePreset(
+        BattlePreset(
         "normandy_1944", "诺曼底登陆『霸王行动』", "OVERLORD · D-DAY", "二战 1944·6",
         "英吉利海峡 · 滩头 → 内陆", "两栖强攻",
         "史上最大两栖战役：盟军五滩上陆、空降控扼侧翼，德军依托大西洋壁垒与装甲预备队反突击。风暴、滩头、沼泽水网并存。",
@@ -162,7 +166,23 @@ BATTLE_PRESETS: list[BattlePreset] = [
         {"combat_scale": 1.2, "terrain_cost_scale": 1.5, "entrench_bonus": 0.75,
          "depot_radius": 5, "supply_combat_scale": 0.6, "air_scale": 1.4},
         [_S({"hp": 1.0, "atk": 1.2, "def": 0.9, "speed": 0.9, "supply": 1.2, "spirit": 1.1, "air": 1.2}),
-         _S({"hp": 1.2, "atk": 0.9, "def": 1.5, "speed": 0.7, "supply": 0.8, "spirit": 1.3, "air": 0.2})]),
+         _S({"hp": 1.2, "atk": 0.9, "def": 1.5, "speed": 0.7, "supply": 0.8, "spirit": 1.3, "air": 0.2})],
+        briefing="""【战役背景】
+1944年6月6日，盟军发起"霸王行动"(Operation Overlord)，在法国诺曼底五处海滩实施人类历史上规模最大的两栖登陆作战。美英加三国联军约156,000人分东西两线同时上陆， airborne空降兵在前夜控扼侧翼交通枢纽；德军依托大西洋壁垒一线设防，装甲预备队部署在内陆待命。
+
+【兵力对比】
+美军（西侧）：主攻奥马哈、犹他两滩，以第29、第4步兵师为第一波，第82、第101空降师 airborne 纵深着陆。火力占优，舰炮与航空支援充足。
+英加军（东侧）：主攻宝剑、朱诺、黄金三滩，第3步兵师与加第3师先上陆，第6空降师控制奥恩河桥梁。目标为夺卡昂，打通内陆通道。
+德军：第7集团军驻守法国西北部海岸，第352步兵师固守奥马哈附近。装甲师分散部署，需铁路机动集结。防御体系依托混凝土碉堡与海岸障碍。
+
+【地形要点】
+科唐坦半岛西部水网纵横，沼泽与树篱交错——德军称" bocage"，是装甲部队最大的天敌。东海岸相对平坦，适合大规模机动。多座桥梁跨越奥恩河与维河的交汇处是必争的战略节点。
+
+【天气预判】
+登陆当日风暴肆虐，浪高超过预期，航空掩护大幅打折；登陆后2-3天转阴，随后渐晴。气象变化将在整个战役期间持续影响空军出击率与地面机动。
+
+【历史参考】
+D-Day 伤亡约10,000人（其中美军奥马哈海滩尤为惨烈），盟军成功建立稳固滩头阵地，为最终解放西欧奠定基础。战役持续约90天，以法莱斯包围战告终，德军西线主力被歼灭。"""),
     BattlePreset(
         "iwo_jima_1945", "硫磺岛战役", "DETACHMENT", "太平洋 1945·2", "火山岛 · 折钵山矶部",
         "两栖强攻",
@@ -218,7 +238,23 @@ BATTLE_PRESETS: list[BattlePreset] = [
         {"combat_scale": 1.4, "entrench_bonus": 1.2, "terrain_cost_scale": 1.4,
          "depot_radius": 4, "supply_combat_scale": 0.8, "arty_scale": 1.3},
         [_S({"hp": 1.2, "atk": 1.0, "def": 1.6, "speed": 0.6, "supply": 0.7, "spirit": 1.5, "air": 0.3}),
-         _S({"hp": 1.0, "atk": 1.25, "def": 1.1, "speed": 0.8, "supply": 0.9, "spirit": 1.2, "air": 0.8})]),
+         _S({"hp": 1.0, "atk": 1.25, "def": 1.1, "speed": 0.8, "supply": 0.9, "spirit": 1.2, "air": 0.8})],
+        briefing="""\
+【战役背景】
+1942年8月，德军第6集团军向斯大林格勒发起进攻，意图夺取伏尔加河畔工业城市，切断苏军南翼补给线。苏军以第62、第64集团军在城内有组织地实施逐街逐屋抵抗，将德军拖入惨烈的城市消耗战。
+
+【兵力对比】
+苏军（ defenders）：第62集团军（崔可夫）守城核心，依托伏尔加河东岸建立补给通道；第64集团军负责外围支援。总兵力约16万人，弹药与粮食极度匮乏，但士气高昂。
+德军（ attackers）：第6集团军（保卢斯）为主攻力量，辅以罗马尼亚第3、第4集团军掩护侧翼。总兵力约27万人，装甲与火力占优，但补给线过长、侧翼薄弱。
+
+【地形要点】
+伏尔加河是唯一补给生命线，渡河船艇随时遭空袭。市区内工厂区、火车站、巴甫洛夫大楼等关键点成为反复争夺的堡垒。10月后气温骤降，未做好冬装的部队战斗效能急剧下降。
+
+【天气预判】
+8-9月秋高气爽，利于德军装甲机动；10月起秋雨连绵，泥泞延缓一切行动；11月冬雪降临，双方均遭受严寒考验。苏军反攻时机选择在德军侧翼由罗军把守的薄弱地带。
+
+【历史参考】
+斯大林格勒战役是二战苏德战场的转折点，德军第6集团军全军覆没，约30万人伤亡或被俘。城市巷战的惨烈程度令后世震惊，战役深刻体现了"组织摩擦"在极端条件下对胜负的决定性影响。"""),
     BattlePreset(
         "berlin_1945", "柏林战役", "BASTION", "苏德 1945·4", "德国首都 · 决战",
         "城市巷战",
@@ -357,7 +393,13 @@ def _float_or(v, default: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 导出给 Web 端
+
+def reset_battle(sim) -> None:
+    """将世界引擎 tuning 恢复为 DEFAULT_TUNING 默认值，用于战役定制撤销。"""
+    from .engine.world import DEFAULT_TUNING
+    sim.world.tuning.clear()
+    sim.world.tuning.update(DEFAULT_TUNING)
+
 # ---------------------------------------------------------------------------
 def global_knobs_meta() -> list[dict]:
     return [k.asdict for k in GLOBAL_KNOBS]

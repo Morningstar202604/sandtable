@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .. import replay
 from ..config import settings
 from ..engine.world import DEFAULT_TUNING
 from ..llm import llm_client
@@ -329,7 +330,7 @@ def create_app(policy: str = "auto", seed: int | None = None,
     def _scenario_info(key: str, mod) -> dict:
         fac = getattr(mod, "FACTIONS", None) or \
             [{"id": "red", "name": "红军"}, {"id": "blue", "name": "蓝军"}]
-        return {
+        info: dict = {
             "id": key,
             "name": getattr(mod, "SCENARIO_NAME", key),
             "codename": getattr(mod, "CODENAME", ""),
@@ -339,6 +340,14 @@ def create_app(policy: str = "auto", seed: int | None = None,
             "desc": getattr(mod, "SCENARIO_DESC", ""),
             "sides": [{"id": f["id"], "name": f.get("name", f["id"])} for f in fac],
         }
+        # Join with battle preset briefing if available
+        if _HAS_BATTLELIB:
+            for bp in battlelib.BATTLE_PRESETS:
+                if bp.pid == key or bp.name and bp.name in getattr(mod, "SCENARIO_NAME", ""):
+                    if bp.briefing:
+                        info["briefing"] = bp.briefing
+                        break
+        return info
 
     @app.get("/api/scenarios")
     def list_scenarios():
@@ -394,6 +403,16 @@ def create_app(policy: str = "auto", seed: int | None = None,
             return {"ok": False, "error": "战役库未加载"}
         return {"ok": True, "presets": battlelib.presets_meta()}
 
+    @app.get("/api/briefing")
+    def get_briefing(pid: str | None = None):
+        """获取战役简报详情。"""
+        if not _HAS_BATTLELIB:
+            return {"ok": False, "error": "战役库未加载"}
+        preset = next((p for p in battlelib.BATTLE_PRESETS if p.pid == pid), None)
+        if not preset:
+            return {"ok": False, "error": f"未找到战役: {pid}"}
+        return {"ok": True, "briefing": preset.briefing, "meta": preset.meta()}
+
     @app.get("/api/battle/params")
     def get_battle_params():
         """战役定制的量化参数定义：前端据 global/side_dims/env/weather 生成滑块组。"""
@@ -446,6 +465,13 @@ def create_app(policy: str = "auto", seed: int | None = None,
     @app.get("/api/metrics")
     def get_metrics():
         return host.sim.compute_metrics()
+
+    @app.get("/api/metrics/history")
+    def get_metrics_history(max_points: int = 400):
+        """逐拍指标历史（导演部讲评曲线），max_points 后端降采样控制传输量。"""
+        return {"tick": host.sim.tick,
+                "series": host.sim.metrics_history_view(
+                    min(2000, max_points))}
 
     @app.post("/api/control")
     def control(body: ControlBody):
@@ -737,6 +763,19 @@ def create_app(policy: str = "auto", seed: int | None = None,
             "traces": host.sim.traces,
             "agents": host.sim.agent_snapshot(),
         }
+
+    @app.get("/api/debug/report")
+    def get_debug_report():
+        """导出 Markdown 复盘报告：关键事件 + 决策摘要 + 指标统计。"""
+        data = replay.build_replay_data(
+            host.sim.events,
+            meta={"title": f"{host.sim.scenario_name} · 复盘",
+                  "path": "在线推演", "policy": host.policy,
+                  "seed": host.seed})
+        return {"ok": True,
+                "filename": f"复盘_{host.sim.scenario_key}_T{host.sim.tick}.md",
+                "markdown": replay.build_report(
+                    data, title=f"{host.sim.scenario_name} · 复盘报告")}
 
     @app.get("/api/stream")
     async def stream():

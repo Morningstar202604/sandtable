@@ -13,11 +13,12 @@
 
 from __future__ import annotations
 
-from . import cross_river, normandy
+from . import cross_river, normandy, stalingrad
 
 SCENARIOS: dict[str, object] = {
     "cross_river": cross_river,
     "normandy": normandy,
+    "stalingrad": stalingrad,
 }
 DEFAULT_SCENARIO = "cross_river"
 

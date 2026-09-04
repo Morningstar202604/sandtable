@@ -31,6 +31,8 @@ const S = {
   audio: { ctx: null, enabled: true, volume: 0.3, lastPlay: {} },
   selectedUnit: null,   // 选中的单位ID
   decisionBubbles: [],  // 战术Agent决策气泡 {unit_id, text, x, y, start, duration}
+  briefing: null,       // 当前选中的战役简报
+  _pendingLaunch: null, // 待启动的 launchExercise 参数
 };
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -41,10 +43,11 @@ const KIND_META = {
   intent: ["意图", "#e2a336"], order: ["命令", "#e5484d"], ack: ["确认", "#7c8a98"],
   sitrep: ["报告", "#46c98d"], request: ["请示", "#c58af9"], plan: ["方案", "#e2a336"],
   intel: ["情报", "#4c8dff"], escalation: ["告警", "#ff7a45"],
+  briefing_pulse: ["指挥摘要", "#dfb26a"],
 };
 
 const TERR_COLOR = { ".": "#121920", "f": "#152219", "h": "#1b2114", "~": "#0e2033", "B": "#3a3123", "C": "#242b33", "m": "#14262a", "r": "#26200f" };
-const WEATHER_CN = { clear: "晴", overcast: "阴", rain: "雨", storm: "风暴" };
+const WEATHER_CN = { clear: "晴", overcast: "阴", rain: "雨", storm: "暴风雪", snowstorm: "暴风雪" };
 const PALETTE = ["#e5484d", "#4c8dff", "#46c98d", "#e2a336", "#c58af9", "#ff7a45"];
 const ARCTYPE_CN = {
   army_cmd: "军事主官", cos: "参谋·方案", intel: "参谋·情报", log: "参谋·后勤",
@@ -106,7 +109,7 @@ function boot() {
    // 智能体调试中心
    "debug-search", "debug-side", "debug-count", "agent-list-items",
    "dbg-empty", "dbg-detail", "dbg-title", "dbg-meta", "dbg-live",
-   "dbg-tabs", "dbg-content", "debug-export",
+   "dbg-tabs", "dbg-content", "debug-export", "report-export",
    // v7 增强：一线分队战术面板 + 昼夜/天气指示
    "tactical", "deck-period", "deck-weather",
   ].forEach((k) => (els[k] = $(k)));
@@ -260,6 +263,7 @@ function wireStudio() {
   els["debug-search"].addEventListener("input", debounce(loadDebugData, 300));
   els["debug-side"].addEventListener("change", loadDebugData);
   els["debug-export"].addEventListener("click", exportDebugJson);
+  els["report-export"].addEventListener("click", exportReport);
   els["dbg-tabs"].addEventListener("click", (e) => {
     const tab = e.target.closest(".dbg-tab");
     if (!tab) return;
@@ -559,7 +563,7 @@ async function updateHomeStatus() {
   } catch (e) { /* ignore */ }
 }
 
-// 从路口启动：使用当前已保存的引擎配置，直接进入指挥台
+// 从路口启动：使用当前已保存的引擎配置，进入简报屏后再启动
 async function launchExercise() {
   try {
     const s = await (await fetch("/api/settings")).json();
@@ -568,6 +572,51 @@ async function launchExercise() {
       els["h-home-note"].textContent = "请先到「想定库」选定一个想定，或让 AI 生成。";
       return;
     }
+    els["btn-home-launch"].disabled = true;
+    // Fetch briefing for the selected scenario
+    const presets = await (await fetch("/api/battle/presets")).json();
+    const preset = (presets.presets || []).find((p) => p.id === scenario);
+    S.briefing = preset || null;
+    showBriefingScreen(preset);
+  } catch (e) {
+    els["h-home-note"].textContent = "启动失败，请重试：" + String(e);
+  } finally {
+    els["btn-home-launch"].disabled = false;
+  }
+}
+
+// 显示战役简报屏
+function showBriefingScreen(preset) {
+  if (!preset) {
+    // 无简报，直接启动
+    doLaunchExercise();
+    return;
+  }
+  els["briefing-title"].textContent = preset.name || "";
+  els["briefing-codename"].textContent = preset.codename || "";
+  // Parse briefing text into sections
+  const b = preset.briefing || "";
+  const sections = b.split(/【(.+?)】/).filter(Boolean);
+  const sectionMap = {};
+  for (let i = 0; i < sections.length - 1; i += 2) {
+    sectionMap[sections[i]] = sections[i + 1];
+  }
+  els["briefing-narrative"].textContent = sectionMap["战役背景"] || sectionMap["背景"] || (preset.desc || "");
+  els["briefing-force-comparison"].textContent = sectionMap["兵力对比"] || "—";
+  els["briefing-terrain"].textContent = sectionMap["地形特点"] || sectionMap["地形"] || "—";
+  els["briefing-weather"].textContent = sectionMap["天气趋势"] || sectionMap["天气"] || "—";
+  els["briefing-screen"].classList.remove("hidden");
+}
+
+function hideBriefingScreen() {
+  els["briefing-screen"].classList.add("hidden");
+}
+
+// 实际启动逻辑（从简报屏确认后调用）
+async function doLaunchExercise() {
+  try {
+    const s = await (await fetch("/api/settings")).json();
+    const scenario = S.scenSelected || s.scenario;
     els["btn-home-launch"].disabled = true;
     const updates = Object.entries(S.roleEdits)
       .filter(([, c]) => Object.keys(c).length)
@@ -587,12 +636,14 @@ async function launchExercise() {
       body: JSON.stringify({ scenario }),
     });
     await control({ action: "start" });
+    hideBriefingScreen();
     els.studio.classList.add("hidden");
     els.deck.classList.remove("hidden");
+    els["campaign-bar"].classList.remove("hidden");
     els.feed.innerHTML = "";
     fetchState();
   } catch (e) {
-    els["h-home-note"].textContent = "启动失败，请重试：" + String(e);
+    hideBriefingScreen();
   } finally {
     els["btn-home-launch"].disabled = false;
   }
@@ -2946,8 +2997,13 @@ function addFeed(e) {
   div.className = `fi k-${e.kind}${e.director ? " dir" : ""}`;
   div.dataset.kind = e.kind;
   const hasBody = !!(e.body || e.subject);
+  // 消息类型图标
+  const MSG_ICONS = { intent: "▶", order: "▼", ack: "✓", sitrep: "◈", request: "?", plan: "◇", intel: "◎", escalation: "!", briefing_pulse: "📡" };
+  const mIcon = MSG_ICONS[e.kind] || "·";
+  const mIconColor = meta[1] || "#7c8a98";
   div.innerHTML = `
     <div class="fi-head"><span class="ft">T${String(e.t).padStart(3, "0")}</span>
+      <span class="fi-icon" style="color:${mIconColor}">${mIcon}</span>
       <span class="fcamp dir-src" ${e.camp ? `style="color:${color(e.camp)}"` : ""}>${esc(src.slice(0, 3))}</span>
       <span class="fk">${meta[0]}${e.director ? "·注入" : ""}</span>
       <span class="fr">${esc(titleOf(e.sender))} → ${esc(titleOf(e.recipient))}</span>
@@ -3050,10 +3106,58 @@ function addSysFeed(e) {
   const isTactical = e.type === "tactical" || e.type === "tactical_rejected";
   const div = document.createElement("div");
   div.className = `fi sys${warn ? " warn" : e.type === "dirscript" ? " dir" : ""}${isTactical ? " tactical" : ""}`;
+  // 图标映射
+  const ICONS = { combat: "⚔", fire: "▲", destroyed: "✝", intel: "◎", reached: "➤",
+    isolation_blocked: "⛔", msg_lost: "✉", weather: "☁", reinforce: "＋", depot: "⚑",
+    objective: "◈", air: "✈", llm_fallback: "⚠", action: "→", tactical: "◆", tactical_rejected: "◇",
+    dirscript: "◉", dirscript_failed: "⚠" };
+  const ic = ICONS[e.type] || "·";
+  const icColor = { combat: "#e5484d", fire: "#ff9a3c", destroyed: "#ff5d5d", intel: "#4c8dff",
+    weather: "#7c8a98", reinforce: "#46c98d", depot: "#dfb26a", objective: "#dfb26a",
+    air: "#c58af9", llm_fallback: "#ff7a45", tactical: "#46c98d", tactical_rejected: "#ff7a45",
+    dirscript: "#dfb26a", dirscript_failed: "#ff7a45", isolation_blocked: "#ff7a45",
+    msg_lost: "#7c8a98", reached: "#7c8a98", action: "#7c8a98" }[e.type] || "#7c8a98";
   div.innerHTML = `<div class="fi-head"><span class="ft">T${String(e.t).padStart(3, "0")}</span>
+    <span class="fi-icon" style="color:${icColor}">${ic}</span>
     <span class="fcamp">${e.camp ? esc((S.sideNames[e.camp] || e.camp).slice(0, 2)) : ""}</span>
     <span class="fr mono">${esc(sub)}</span></div>`;
   prependFeed(div);
+}
+
+function addBriefingPulse(e) {
+  const payload = e.payload || {};
+  const div = document.createElement("div");
+  div.className = "fi k-briefing_pulse briefing-pulse";
+  div.dataset.kind = "briefing_pulse";
+  const lines = [];
+  if (payload.weather_name) lines.push(`天气：<span class="weather-val">${esc(payload.weather_name)}</span>`);
+  if (payload.objectives && payload.objectives.length) {
+    const objs = payload.objectives.map((o) => {
+      const c = o.controller === "red" ? "red" : o.controller === "blue" ? "blue" : "neutral";
+      return `<span class="obj-dot obj-${c}" title="${esc(o.name)}">${esc(o.name.slice(0, 6))}</span>`;
+    }).join("");
+    lines.push(`目标：${objs}`);
+  }
+  if (payload.unit_counts) {
+    const counts = Object.entries(payload.unit_counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ");
+    lines.push(`兵力：${counts}`);
+  }
+  div.innerHTML = `<div class="fi-head"><span class="ft">T${String(e.t).padStart(3, "0")}</span><span class="fk">📡 指挥摘要</span></div><div class="fi-body briefing-pulse-body">${lines.join("<br>")}</div>`;
+  prependFeed(div);
+}
+
+function updateCampaignBar(e) {
+  const payload = e.payload || {};
+  const tickEl = els["cb-tick"];
+  if (tickEl) tickEl.textContent = String(e.t).padStart(3, "0");
+  const weatherEl = els["cb-weather"];
+  if (weatherEl && payload.weather_name) weatherEl.textContent = payload.weather_name;
+  const redCount = els["cb-red-count"];
+  const blueCount = els["cb-blue-count"];
+  if (payload.unit_counts) {
+    if (redCount) redCount.textContent = payload.unit_counts.red || 0;
+    if (blueCount) blueCount.textContent = payload.unit_counts.blue || 0;
+  }
 }
 
 function prependFeed(div) {
@@ -3068,12 +3172,18 @@ function applyFeedFilter() {
   }
 }
 
-// ---------- 导演部讲评（复盘指标） ----------
+// ---------- 导演部讲评（复盘指标 + 曲线） ----------
 async function fetchMetrics() {
-  try { renderMetrics(await (await fetch("/api/metrics")).json()); } catch (e) { /* ignore */ }
+  try {
+    const [m, h] = await Promise.all([
+      fetch("/api/metrics").then((r) => r.json()),
+      fetch("/api/metrics/history").then((r) => r.json()),
+    ]);
+    renderMetrics(m, h);
+  } catch (e) { /* ignore */ }
 }
 
-function renderMetrics(m) {
+function renderMetrics(m, h) {
   const name = S.sideNames || {};
   const card = (side) => {
     const c = (m.camps || {})[side] || {};
@@ -3109,7 +3219,161 @@ function renderMetrics(m) {
   els.metrics.innerHTML =
     `<div class="mnote">T${String(m.tick).padStart(3, "0")} · ${esc(m.scenario || "")} · 每 3 秒刷新</div>` +
     `<div class="objs">${objs}</div>` +
-    Object.keys(m.camps || {}).map(card).join("");
+    Object.keys(m.camps || {}).map(card).join("") +
+    `<div class="mcharts">
+       ${chartCanvas("mc-strength", "战力曲线（存活单位强度）")}
+       ${chartCanvas("mc-score", "得分曲线（目标控制）")}
+       ${chartCanvas("mc-objectives", "目标控制时序")}
+     </div>`;
+  renderCharts(h);
+}
+
+// ---- 讲评曲线（Canvas 绘制） ----
+function chartCanvas(id, label) {
+  return `<div class="mchart"><div class="mc-title">${label}</div><canvas id="${id}" class="mcanvas"></canvas></div>`;
+}
+
+function sizeCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 320;
+  const h = cv.clientHeight || 108;
+  cv.width = Math.max(1, Math.round(w * dpr));
+  cv.height = Math.max(1, Math.round(h * dpr));
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+function chartBase(cv, maxY) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "rgba(148,178,210,.10)";
+  ctx.lineWidth = 1;
+  const rows = 3;
+  for (let i = 0; i <= rows; i++) {
+    const y = 6 + (h - 16) * (i / rows);
+    ctx.beginPath(); ctx.moveTo(30, y); ctx.lineTo(w - 4, y); ctx.stroke();
+  }
+  ctx.font = "9px ui-monospace, SFMono-Regular, Consolas, monospace";
+  ctx.fillStyle = "rgba(148,178,210,.5)";
+  for (let i = 0; i <= rows; i++) {
+    const y = 6 + (h - 16) * (i / rows);
+    const v = Math.round(maxY * (1 - i / rows));
+    ctx.textAlign = "left";
+    ctx.fillText(String(v), 2, y + 3);
+  }
+  return { ctx, w, h };
+}
+
+function drawMetricLines(cv, samples, getY, sides, label) {
+  const maxY = Math.max(4, ...samples.flatMap((s) => sides.map((k) => getY(s, k) || 0)));
+  const { ctx, w, h } = chartBase(cv, maxY);
+  const n = samples.length;
+  const X = (i) => 30 + (w - 36) * (n > 1 ? i / (n - 1) : 0.5);
+  const Y = (v) => 6 + (h - 16) * (1 - (v || 0) / maxY);
+  ctx.font = "10px 'Noto Sans SC', 'PingFang SC', sans-serif";
+  ctx.fillStyle = "rgba(210,190,140,.8)";
+  ctx.textAlign = "left";
+  ctx.fillText(label, 30, 5);
+  sides.forEach((k, idx) => {
+    const col = color(k);
+    const pts = samples.map((s, i) => [X(i), Y(getY(s, k) || 0)]);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+    ctx.stroke();
+    ctx.globalAlpha = 0.10;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], h - 10);
+    pts.forEach((p) => ctx.lineTo(p[0], p[1]));
+    ctx.lineTo(pts[n - 1][0], h - 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    const lx = w - 6, ly = 6 + idx * 12;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(lx - 38, ly + 1, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = "9px 'Noto Sans SC', sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgba(210,215,220,.7)";
+    ctx.fillText(S.sideNames[k] || k, lx, ly + 4);
+    ctx.textAlign = "left";
+  });
+  ctx.fillStyle = "rgba(148,178,210,.5)";
+  ctx.font = "9px ui-monospace, Consolas, monospace";
+  const step = Math.max(1, Math.floor(n / 4));
+  for (let i = 0; i < n; i += step) {
+    ctx.textAlign = "center";
+    ctx.fillText("T" + samples[i].tick, X(i), h - 1);
+  }
+}
+
+function drawObjectiveBands(cv, samples) {
+  const names = [];
+  samples.forEach((s) => (s.objectives || []).forEach((o) => {
+    if (o && o.name && !names.includes(o.name)) names.push(o.name);
+  }));
+  if (!names.length) return;
+  const { ctx, w, h } = sizeCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const n = samples.length;
+  const rowH = Math.max(14, Math.min(20, (h - 8) / names.length));
+  const x0 = 88;
+  ctx.font = "9px 'Noto Sans SC', sans-serif";
+  names.forEach((nm, ri) => {
+    const y = 4 + ri * rowH;
+    ctx.fillStyle = "rgba(210,190,140,.7)";
+    ctx.textAlign = "left";
+    ctx.fillText(nm.length > 7 ? nm.slice(0, 7) + "…" : nm, 2, y + rowH - 6);
+    const segs = [];
+    let lastCtrl = null, start = 0;
+    samples.forEach((s, i) => {
+      const o = (s.objectives || []).find((x) => x && x.name === nm);
+      const ctrl = o ? o.controller : null;
+      if (i === 0) { lastCtrl = ctrl; return; }
+      if (ctrl !== lastCtrl) { segs.push([start, i, lastCtrl]); lastCtrl = ctrl; start = i; }
+    });
+    segs.push([start, n, lastCtrl]);
+    segs.forEach(([a, b, ctrl]) => {
+      const x1 = x0 + (w - x0 - 4) * (a / n);
+      const x2 = x0 + (w - x0 - 4) * (b / n);
+      ctx.fillStyle = ctrl ? hexA(color(ctrl), .5) : "rgba(120,130,140,.14)";
+      ctx.fillRect(x1, y + 2, Math.max(1, x2 - x1), rowH - 8);
+      ctx.strokeStyle = "rgba(0,0,0,.25)";
+      ctx.lineWidth = .5;
+      ctx.strokeRect(x1, y + 2, Math.max(1, x2 - x1), rowH - 8);
+    });
+  });
+}
+
+function renderCharts(h) {
+  if (!h || !h.series || !h.series.length) return;
+  const samples = h.series;
+  const sides = Object.keys(samples[0].strength || {});
+  const cv1 = document.getElementById("mc-strength");
+  if (cv1) drawMetricLines(cv1, samples, (s, k) => s.strength[k], sides, "存活单位强度");
+  const cv2 = document.getElementById("mc-score");
+  if (cv2) drawMetricLines(cv2, samples, (s, k) => s.score[k], sides, "目标控制得分");
+  const cv3 = document.getElementById("mc-objectives");
+  if (cv3) drawObjectiveBands(cv3, samples);
+}
+
+async function exportReport() {
+  try {
+    const r = await (await fetch("/api/debug/report")).json();
+    if (!r.ok) return;
+    const blob = new Blob([r.markdown || ""], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = r.filename || "复盘报告.md";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 300);
+  } catch (e) {
+    console.error("导出报告失败:", e);
+  }
 }
 
 // ---------- SSE 与控制 ----------
@@ -3120,6 +3384,7 @@ function connectSSE() {
     try { e = JSON.parse(ev.data); } catch { return; }
     if (e.type === "reset") { els.feed.innerHTML = ""; S.epoch = e.epoch; fetchState(); return; }
     if (e.type === "msg") { addFeed(e); animateMsg(e); }
+    else if (e.type === "briefing_pulse") { addBriefingPulse(e); updateCampaignBar(e); }
     else addSysFeed(e);
     els.tick.textContent = String(e.t).padStart(3, "0");
   };

@@ -1,4 +1,4 @@
-"""世界引擎：让组织层的命令产生真实后果。
+﻿"""世界引擎：让组织层的命令产生真实后果。
 
 只负责机动、交战、补给、侦察、天气/空军遮断、补给站争夺、战役目标。
 所有随机性来自注入的 rng——固定种子整场可复现。引擎是双方共享的
@@ -32,8 +32,8 @@ UNIT_GLYPH = {"infantry": "步", "armor": "装", "artillery": "炮", "recon": "�
 UNIT_NAME = {"infantry": "步兵", "armor": "装甲", "artillery": "炮兵", "recon": "侦察"}
 
 # 天气对空军遮断的放大系数（storm 基本瘫痪空中力量——1944 年 6 月 6 日）
-WEATHER_AIR = {"clear": 1.0, "overcast": 0.5, "rain": 0.3, "storm": 0.1}
-WEATHER_CN = {"clear": "晴", "overcast": "阴", "rain": "雨", "storm": "风暴"}
+WEATHER_AIR = {"clear": 1.0, "overcast": 0.5, "rain": 0.3, "storm": 0.1, "snowstorm": 0.05}
+WEATHER_CN = {"clear": "晴", "overcast": "阴", "rain": "雨", "storm": "暴风雪", "snowstorm": "暴风雪"}
 
 # 可调参数默认值（Web 设置面板实时可改；dict 以引用共享给 sim/host）
 DEFAULT_TUNING: dict = {
@@ -555,7 +555,15 @@ class World:
             return
         # 天气效果在_dmg/_movement/sightings中读取self.weather应用
         # 这里处理持续天气的累积效果（如泥泞）
-        pass
+        rain_penalty = float(self.tuning.get("rain_move_penalty", 0.2))
+        storm_pen = float(self.tuning.get("storm_arty_penalty", 0.3))
+        for u in self.units.values():
+            if not u.alive:
+                continue
+            if self.weather == "rain":
+                u.fatigue = min(100.0, u.fatigue + rain_penalty * 0.05)
+            if self.weather == "storm":
+                u.morale = max(0.0, u.morale - storm_pen * 0.1)
 
     def _update_command_control(self, events: list[dict]) -> None:
         """3.指挥范围与控制：单位离指挥官过远则降效，指挥官阵亡影响士气。"""

@@ -3,9 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230d140e'/%3E%3Ccircle cx='32' cy='32' r='30' fill='none' stroke='%23dfb26a' stroke-width='4'/%3E%3Cpolygon points='32,20 35.5,29.2 45.2,29.7 37.6,35.4 40.3,44.7 32,39.4 23.7,44.7 26.4,35.4 18.8,29.7 28.5,29.2' fill='%23dfb26a'/%3E%3C/svg%3E">
 <title>将台 WARGENERALS · 导演部作业区</title>
-<link rel="stylesheet" href="css/app.css?v=29">
+<link rel="stylesheet" href="css/app.css?v=31">
 </head>
 <body>
 
@@ -16,6 +19,39 @@
      本工作台是"路口"式入口 + 四个独立配置视图（想定库 / 兵力编成 /
      导演部设定），全局引擎与参数在「设置」中；运行在「指挥台」。
 ============================================================ -->
+<!-- 战役简报屏 -->
+<div id="briefing-screen" class="briefing-screen hidden">
+  <div class="briefing-card">
+    <div class="briefing-header">
+      <span class="briefing-eyebrow">CINEMATIC BRIEFING</span>
+      <h1 class="briefing-title" id="briefing-title"></h1>
+      <span class="briefing-codename" id="briefing-codename"></span>
+    </div>
+    <div class="briefing-body">
+      <div class="briefing-section">
+        <h3>战役背景</h3>
+        <p id="briefing-narrative"></p>
+      </div>
+      <div class="briefing-section">
+        <h3>兵力对比</h3>
+        <div id="briefing-force-comparison"></div>
+      </div>
+      <div class="briefing-section">
+        <h3>地形特点</h3>
+        <p id="briefing-terrain"></p>
+      </div>
+      <div class="briefing-section">
+        <h3>天气趋势</h3>
+        <p id="briefing-weather"></p>
+      </div>
+    </div>
+    <div class="briefing-footer">
+      <button id="briefing-back-btn" class="btn btn-secondary">← 返回</button>
+      <button id="briefing-confirm-btn" class="btn btn-primary">确认，开始推演</button>
+    </div>
+  </div>
+</div>
+
 <div id="studio" class="studio">
   <div class="atmo" aria-hidden="true">
     <span class="orb orb-1"></span>
@@ -164,6 +200,7 @@
           <select id="debug-side" class="dbg-input"><option value="">全部阵营</option></select>
           <span class="dim" id="debug-count"></span>
           <button class="btn mini" id="debug-export">导出复盘 JSON</button>
+          <button class="btn mini" id="report-export">导出复盘报告</button>
         </div>
         <div class="debug-container">
           <div class="agent-list" id="agent-list-items"></div>
@@ -235,6 +272,23 @@
     <button id="btn-settings" class="btn">⚙ 设置</button>
   </div>
 </header>
+<div id="campaign-bar" class="campaign-bar hidden">
+  <div class="campaign-stat">
+    <span class="campaign-label">T-</span><span class="campaign-tick mono" id="cb-tick">0</span>
+  </div>
+  <div class="campaign-stat">
+    <span class="campaign-label">天气:</span><span class="campaign-weather" id="cb-weather">—</span>
+  </div>
+  <div class="campaign-objectives" id="cb-objectives"></div>
+  <div class="campaign-factions">
+    <div class="faction-stat" id="cb-red">
+      <span class="faction-dot red-dot"></span><span class="campaign-unit-count mono" id="cb-red-count">0</span><span class="campaign-label">单位</span>
+    </div>
+    <div class="faction-stat" id="cb-blue">
+      <span class="faction-dot blue-dot"></span><span class="campaign-unit-count mono" id="cb-blue-count">0</span><span class="campaign-label">单位</span>
+    </div>
+  </div>
+</div>
 
 <main>
   <aside class="panel left">
@@ -600,7 +654,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=62"></script>
+<script src="js/app.js?v=63"></script>
 <script>
 /* 纵深增强：滑杆进度填充（纯增量，不触碰主逻辑） */
 (function () {
