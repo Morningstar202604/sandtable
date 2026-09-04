@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 
 import httpx
@@ -92,7 +93,8 @@ class LLMClient:
         headers = {"Authorization": f"Bearer {self.api_key}"}
         last_err: Exception | None = None
         t0 = time.perf_counter()
-        for _ in range(max(1, settings.llm_retry)):
+        n_retries = max(1, settings.llm_retry)
+        for attempt in range(n_retries):
             try:
                 resp = httpx.post(
                     f"{self.base_url}/chat/completions",
@@ -103,11 +105,14 @@ class LLMClient:
                 self._capture.append({
                     "system": system, "user": user, "response": content,
                     "latency_ms": round((time.perf_counter() - t0) * 1000),
-                    "ok": True,
+                    "ok": True, "attempt": attempt + 1,
                 })
                 return content
-            except Exception as e:  # noqa: BLE001  网络类异常统一重试一次后上抛
+            except Exception as e:  # noqa: BLE001
                 last_err = e
+                if attempt < n_retries - 1:
+                    delay = min(2 ** attempt * 0.1 + random.uniform(0, 0.05), 1.0)
+                    time.sleep(delay)
         self._capture.append({
             "system": system, "user": user, "response": "",
             "latency_ms": round((time.perf_counter() - t0) * 1000),
@@ -147,7 +152,8 @@ class LLMClient:
         headers = {"Authorization": f"Bearer {self.api_key}"}
         last_err: Exception | None = None
         t0 = time.perf_counter()
-        for _ in range(max(1, settings.llm_retry)):
+        n_retries = max(1, settings.llm_retry)
+        for attempt in range(n_retries):
             try:
                 resp = httpx.post(
                     f"{self.base_url}/chat/completions",
@@ -167,7 +173,7 @@ class LLMClient:
                     "response": msg.get("content") or "",
                     "tool_calls": calls,
                     "latency_ms": round((time.perf_counter() - t0) * 1000),
-                    "ok": True,
+                    "ok": True, "attempt": attempt + 1,
                 }
                 self._capture.append(rec)
                 return {"text": rec["response"], "tool_calls": calls, "ok": True}
@@ -187,12 +193,21 @@ class LLMClient:
         推理型模型常见两个坑：先输出思维链再给结论、先复述 schema
         示例再给真实答案。因此扫描全部花括号配对片段，返回**最后**
         一个能 json.loads 成功的对象。
+
+        增强：
+        1. 自动剥离 OpenAI reasoning 标签 (<thinking>...</thinking>)
+        2. 尝试截断到最后一个合法 JSON 闭合处
+        3. 若主体是完整对象但尾部有尾逗号/噪声，裁剪后重试
         """
-        text = text.strip()
-        segments = [text]
-        if "```" in text:
+        import re as _re
+        t = text.strip()
+        # 剥离 reasoning / thinking 标签（某些推理模型的输出头）
+        t = _re.sub(r"<thinking[^>]*>.*?</thinking>", "", t, flags=_re.DOTALL).strip()
+        t = _re.sub(r"<thought[^>]*>.*?</thought>", "", t, flags=_re.DOTALL).strip()
+        segments = [t]
+        if "```" in t:
             segments.extend(seg.strip().removeprefix("json").strip()
-                            for seg in text.split("```"))
+                            for seg in t.split("```"))
         last: dict | None = None
         for seg in segments:
             depth = 0
@@ -205,11 +220,29 @@ class LLMClient:
                 elif ch == "}" and depth > 0:
                     depth -= 1
                     if depth == 0 and start is not None:
+                        candidate = seg[start:i + 1]
                         try:
-                            last = json.loads(seg[start:i + 1])
+                            obj = json.loads(candidate)
+                            if isinstance(obj, dict):
+                                # 不中断扫描：模型常先复述 schema 示例再给真实决策，
+                                # 取最后一个合法对象才是实际答案
+                                last = obj
                         except json.JSONDecodeError:
-                            pass  # 该片段非法，继续扫
+                            pass
                         start = None
+            # 若循环结束仍未找到合法 dict（推理溢出截断），尝试修复
+            if last is None:
+                # 找最后一个完整的 } 位置
+                for cut in range(len(seg) - 1, start or 0, -1):
+                    if seg[cut] == "}":
+                        fix = seg[start:cut + 1]
+                        try:
+                            obj = json.loads(fix)
+                            if isinstance(obj, dict):
+                                last = obj
+                                break
+                        except json.JSONDecodeError:
+                            continue
         if last is None:
             raise ValueError("输出中没有可解析的 JSON")
         return last

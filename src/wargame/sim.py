@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import time
@@ -20,7 +21,8 @@ from .config import settings
 from .engine.world import UNIT_NAME, WEATHER_CN, World
 from .llm import llm_client
 from .org import Position, Registry, build_camp_org
-from .schemas import Message, MsgKind, WorldAction
+from .scenarios import load_scenario
+from .schemas import Message, MsgKind
 
 
 class Simulation:
@@ -102,6 +104,9 @@ class Simulation:
         self.traces: list[dict] = []
         self._trace_max = 3000
         self._trace_seq = 0
+        # 逐拍指标快照（导演部讲评曲线数据源），上限兜底防长推演内存膨胀
+        self.metrics_history: list[dict] = []
+        self._metrics_max = 3000
         self.run_dir = (Path(run_dir) if run_dir
                         else Path("runs") / time.strftime("run-%Y%m%d-%H%M%S"))
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -217,6 +222,38 @@ class Simulation:
             idx += 1
         self.script_index = idx
 
+    # ---- 战役简报 ----
+    def get_briefing(self) -> dict:
+        """返回战役简报内容（包含背景、兵力对比、地形、天气、初始目标状态）。"""
+        from .battlelib import BATTLE_PRESETS
+        mod = load_scenario(self.scenario_key)
+        preset_id = self.battle.get("preset", "")
+        preset = next((bp for bp in BATTLE_PRESETS if bp.pid == preset_id), None)
+        briefing_text = (preset.briefing if preset and preset.briefing
+                         else getattr(mod, "SCENARIO_DESC", ""))
+        objectives = []
+        for o in self.world.objectives:
+            obj_copy = dict(o)
+            controller = obj_copy.pop("controller", None)
+            obj_copy["controlled_by"] = self.camp_names.get(controller, controller) if controller else None
+            objectives.append(obj_copy)
+        reinforcements = sorted(getattr(mod, "REINFORCEMENTS", None) or [], key=lambda r: r.get("tick", 0))
+        upcoming_reinf = [r for r in reinforcements if r.get("tick", 0) > self.tick]
+        weather_now = self.world.weather
+        weather_cn = WEATHER_CN.get(weather_now, weather_now)
+        return {
+            "scenario_name": getattr(mod, "SCENARIO_NAME", self.scenario_key),
+            "codename": getattr(mod, "CODENAME", ""),
+            "preset_id": preset_id,
+            "preset_name": preset.name if preset else "",
+            "briefing": briefing_text,
+            "objectives": objectives,
+            "upcoming_reinforcements": upcoming_reinf[:3],
+            "weather": {"current": weather_now, "name": weather_cn},
+            "factions": self.factions,
+            "camp_names": self.camp_names,
+        }
+
     # ---- 主循环 ----
     def run_tick(self) -> None:
         self.tick += 1
@@ -238,10 +275,33 @@ class Simulation:
             self._emit("weather", weather=w, name=WEATHER_CN.get(w, w))
         if self.world.day_period(self.tick) != getattr(self.world, "period", "day"):
             pass  # period 已在 _engine()._day_night() 内更新
+        # 每5拍生成战报事件
+        if self.tick % 5 == 0:
+            self._emit_briefing_pulse()
+        self._capture_metrics_sample()
         if self._pending_lines:
             with self._jsonl_path.open("a", encoding="utf-8") as f:
                 f.write("\n".join(self._pending_lines) + "\n")
             self._pending_lines.clear()
+
+    def _emit_briefing_pulse(self) -> None:
+        """每5拍生成一条战报摘要事件（含当前天气、目标控制权变化、增援预告）。"""
+        weather_now = self.world.weather
+        weather_cn = WEATHER_CN.get(weather_now, weather_now)
+        objectives_status = []
+        for o in self.world.objectives:
+            controller = o.get("controller")
+            controlled = self.camp_names.get(controller, str(controller)) if controller else "未控制"
+            objectives_status.append({"name": o["name"], "value": o.get("value", 1), "controller": controlled})
+        upcoming = [r for r in (getattr(load_scenario(self.scenario_key), "REINFORCEMENTS", []) or [])
+                    if r.get("tick", 0) <= self.tick + 10 and r.get("tick", 0) > self.tick]
+        alive_units = {side: sum(1 for u in self.world.units.values() if u.alive and u.side == side)
+                       for side in self.factions}
+        self._emit("briefing_pulse", tick=self.tick,
+                   weather=weather_now, weather_name=weather_cn,
+                   objectives=objectives_status,
+                   upcoming_reinforcements=upcoming[:2],
+                   unit_counts={s: c for s, c in alive_units.items() if c > 0})
 
     def _deliver(self) -> None:
         for side in self.factions:
@@ -301,6 +361,7 @@ class Simulation:
             "seq": self._trace_seq, "tick": self.tick, "side": side,
             "pos": pos.id, "title": pos.title, "archetype": pos.archetype,
             "policy": "rule" if fallback else self.policy_mode,
+            "policy_reason": getattr(self.policy, "_last_reason", "unknown") if not fallback else "rule_fallback",
             "fallback": fallback, "error": err,
             "structured": bool(any(c.get("tool_calls") for c in llm_calls)),
             "thoughts": (decision.thoughts or "")[:200],
@@ -313,6 +374,8 @@ class Simulation:
             "messages": [],
             "actions": [],
             "llm": llm_calls,
+            "llm_attempts": sum(1 for c in llm_calls if c.get("attempt")),
+            "llm_latency_ms": sum(c.get("latency_ms", 0) for c in llm_calls),
             "budget": {"used": len(llm_calls),
                        "max": settings.max_llm_calls_per_tick},
         }
@@ -471,10 +534,8 @@ class Simulation:
                             f"我部遭敌炮兵急袭，损失{e['dmg']}。",
                             {"event": "fire", "dmg": e["dmg"],
                              "x": target.x, "y": target.y})
-                        try:
+                        with contextlib.suppress(ValueError):
                             self.camps[target.side].bus.send(msg)
-                        except ValueError:
-                            pass
             elif et == "destroyed":
                 self._emit("destroyed", camp=e["side"], unit=e["unit"],
                            name=e["name"], x=e["x"], y=e["y"])
@@ -497,10 +558,8 @@ class Simulation:
             self.tick, f"unit:{unit.id}", owner.id,
             MsgKind.ESCALATION if event == "destroyed" else MsgKind.SITREP,
             subject, body, payload)
-        try:
+        with contextlib.suppress(ValueError):
             self.camps[unit.side].bus.send(msg)
-        except ValueError:
-            pass
 
     # ---- 侦察：敌情流入各自阵营（阵营间唯一信息通道）----
     def _recon(self) -> None:
@@ -520,10 +579,8 @@ class Simulation:
                     "敌情速报", body,
                     {"unit_id": s["unit_id"], "kind": s["kind"], "name": s["name"],
                      "x": s["x"], "y": s["y"], "tick": s["tick"]}, priority=0)
-                try:
+                with contextlib.suppress(ValueError):
                     camp.bus.send(msg)
-                except ValueError:
-                    pass
             self._emit("intel", camp=side, n=len(seen))
 
     # ---- 复盘指标 ----
@@ -551,7 +608,7 @@ class Simulation:
                     latencies.append(min(a["t"] for a in matches) - o["t"])
             units = self.world.side_units_view(side)
             total = sum(1 for u in self.world.units.values() if u.side == side)
-            ev_count = lambda t: sum(  # noqa: E731
+            ev_count = lambda t, side=side: sum(  # noqa: E731
                 1 for e in self.events if e["type"] == t and e.get("camp") == side)
             out["camps"][side] = {
                 "kinds": kinds,
@@ -571,7 +628,7 @@ class Simulation:
                 "strength": round(sum(u["strength"] for u in units)),
             }
         # 战役目标控制与得分（多方各计各的分）
-        score = {f: 0 for f in self.factions}
+        score = dict.fromkeys(self.factions, 0)
         for o in self.world.objectives:
             if o.get("controller") in score:
                 score[o["controller"]] += o.get("value", 1)
@@ -579,6 +636,38 @@ class Simulation:
                               "value": o.get("value", 1)} for o in self.world.objectives]
         out["score"] = score
         return out
+
+    # ---- 逐拍指标快照（讲评曲线） ----
+    def _capture_metrics_sample(self) -> None:
+        """记录本拍兵力/得分/目标控制的轻量快照，供导演部讲评绘制曲线。"""
+        strength: dict[str, int] = {}
+        alive: dict[str, int] = {}
+        for side in self.factions:
+            units = self.world.side_units_view(side)
+            strength[side] = round(sum(u["strength"] for u in units))
+            alive[side] = len(units)
+        score = dict.fromkeys(self.factions, 0)
+        for o in self.world.objectives:
+            if o.get("controller") in score:
+                score[o["controller"]] += o.get("value", 1)
+        self.metrics_history.append({
+            "tick": self.tick,
+            "strength": strength, "alive": alive, "score": score,
+            "objectives": [{"name": o["name"],
+                             "controller": o.get("controller")}
+                            for o in self.world.objectives],
+        })
+        if len(self.metrics_history) > self._metrics_max:
+            del self.metrics_history[: len(self.metrics_history) - self._metrics_max]
+
+    def metrics_history_view(self, max_points: int = 400) -> list[dict]:
+        """返回降采样后的指标历史序列（导演部讲评曲线）。"""
+        h = self.metrics_history
+        max_points = max(2, int(max_points))  # 下限防除零
+        if len(h) <= max_points:
+            return list(h)
+        step = (len(h) + max_points - 1) // max_points
+        return h[::step]
 
     # ---- 快照 ----
     def _org_tree(self, side: str) -> dict:

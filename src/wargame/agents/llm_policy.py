@@ -78,6 +78,11 @@ class PolicyError(Exception):
 class LLMPolicy:
     def __init__(self, client: LLMClient) -> None:
         self.client = client
+        self._last_reason: str = "unknown"
+
+    @property
+    def last_reason(self) -> str:
+        return self._last_reason
 
     def decide(self, agent: Agent, view: SituationView) -> AgentDecision:
         system = self._system(agent, view)
@@ -92,9 +97,11 @@ class LLMPolicy:
                 if r["tool_calls"]:
                     obj = r["tool_calls"][0]["arguments"]
                     if isinstance(obj, dict) and obj:
+                        self._last_reason = "tool_calls"
                         return self._parse(obj, agent, view)
                 # 无工具调用但返回文本（端点忽略 tools）：走 JSON 提示词解析
                 if r["text"].strip():
+                    self._last_reason = "json_prompt"
                     return self._parse(self.client.extract_json(r["text"]),
                                        agent, view)
             except Exception:  # noqa: BLE001  端点不支持 tools → 自动回退 JSON 路径
@@ -109,11 +116,20 @@ class LLMPolicy:
         except Exception:
             # 首次失败多为推理型模型把思维链写满输出：带提醒重试一次
             nudge = (user + "\n\n【重要】上一次输出未包含合法 JSON。"
-                     "请跳过一切解释与推理过程，直接输出一个完整的 JSON 对象。")
+                     "请跳过一切解释与推理过程，直接输出一个完整的 JSON 对象。\n"
+                     "必须包含 thoughts、messages、world_actions 三个字段。")
             try:
                 obj = self.client.extract_json(self.client.chat(system, nudge))
-            except Exception as e:
-                raise PolicyError(f"输出解析失败: {e}") from e
+            except Exception:
+                # 二次失败：强制输出纯 JSON，不附加任何说明
+                hard_nudge = (user + "\n\n【强制】你必须只输出一个合法的 JSON 对象，"
+                              "不要有任何前言、解释、markdown 或代码块。"
+                              "直接以 { 开始，以 } 结束。")
+                try:
+                    obj = self.client.extract_json(self.client.chat(system, hard_nudge))
+                except Exception as e:
+                    raise PolicyError(f"输出解析失败: {e}") from e
+        self._last_reason = "json_prompt"
         return self._parse(obj, agent, view)
 
     # ---- 提示词 ----
@@ -149,7 +165,6 @@ class LLMPolicy:
         )
 
     def _situation(self, agent: Agent, view: SituationView) -> str:
-        p = agent.position
         lines = [f"当前 T{view.tick}。"]
         if agent.tasks:
             ts = "；".join(f"[{t.status}]{t.desc}" for t in agent.tasks[-4:])

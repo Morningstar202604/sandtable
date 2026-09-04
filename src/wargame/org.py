@@ -91,7 +91,7 @@ def build_camp_org(side: Side, titles: dict[str, str] | None = None,
     cf = configs or {}
     u = lambda n: f"{side}-u-{n}"  # noqa: E731  世界单位 id 前缀与阵营一致
 
-    def T(key: str, default: str) -> str:
+    def t_title(key: str, default: str) -> str:
         return t.get(key, default)
 
     # 场景自定义编制：真正意义的各种大型战役不必套固定模板
@@ -104,7 +104,7 @@ def build_camp_org(side: Side, titles: dict[str, str] | None = None,
                 parent = f"{side}:{parent}"
             out.append(_pos(
                 side, key,
-                node.get("title") or T(key, str(key)),
+                node.get("title") or t_title(key, str(key)),
                 node.get("archetype", "army_cmd"),
                 parent,
                 units=[u(str(x)) for x in node.get("units", [])],
@@ -115,30 +115,30 @@ def build_camp_org(side: Side, titles: dict[str, str] | None = None,
 
     positions = [
         # 上级司令部：虚拟职位，只注入任务不参与推演
-        _pos(side, "hq", T("hq", f"上级统帅部（{s}）"), "hq", None,
+        _pos(side, "hq", t_title("hq", f"上级统帅部（{s}）"), "hq", None,
              virtual=True, side_name=s, config=cf.get("hq")),
-        _pos(side, "army", T("army", f"{s}集团军司令"), "army_cmd", f"{side}:hq",
+        _pos(side, "army", t_title("army", f"{s}集团军司令"), "army_cmd", f"{side}:hq",
              units=[u("r1")], side_name=s, config=cf.get("army")),
-        _pos(side, "cos", T("cos", f"{s}参谋长"), "cos", f"{side}:army",
+        _pos(side, "cos", t_title("cos", f"{s}参谋长"), "cos", f"{side}:army",
              staff=True, side_name=s, config=cf.get("cos")),
-        _pos(side, "intel", T("intel", f"{s}情报参谋"), "intel", f"{side}:army",
+        _pos(side, "intel", t_title("intel", f"{s}情报参谋"), "intel", f"{side}:army",
              staff=True, side_name=s, config=cf.get("intel")),
-        _pos(side, "log", T("log", f"{s}后勤参谋"), "log", f"{side}:army",
+        _pos(side, "log", t_title("log", f"{s}后勤参谋"), "log", f"{side}:army",
              staff=True, side_name=s, config=cf.get("log")),
-        _pos(side, "div1", T("div1", f"{s}第1突击师师长"), "div_cmd", f"{side}:army",
+        _pos(side, "div1", t_title("div1", f"{s}第1突击师师长"), "div_cmd", f"{side}:army",
              units=[u("a1")], side_name=s, config=cf.get("div1")),
-        _pos(side, "div2", T("div2", f"{s}第2装甲师师长"), "div_cmd", f"{side}:army",
+        _pos(side, "div2", t_title("div2", f"{s}第2装甲师师长"), "div_cmd", f"{side}:army",
              units=[u("a2")], side_name=s, config=cf.get("div2")),
-        _pos(side, "div1-b1", T("div1-b1", f"{s}第1团团长"), "reg_cmd", f"{side}:div1",
+        _pos(side, "div1-b1", t_title("div1-b1", f"{s}第1团团长"), "reg_cmd", f"{side}:div1",
              units=[u("b1")], side_name=s, config=cf.get("div1-b1")),
-        _pos(side, "div1-b2", T("div1-b2", f"{s}第2团团长"), "reg_cmd", f"{side}:div1",
+        _pos(side, "div1-b2", t_title("div1-b2", f"{s}第2团团长"), "reg_cmd", f"{side}:div1",
              units=[u("b2")], side_name=s, config=cf.get("div1-b2")),
-        _pos(side, "div2-b3", T("div2-b3", f"{s}第3团团长"), "reg_cmd", f"{side}:div2",
+        _pos(side, "div2-b3", t_title("div2-b3", f"{s}第3团团长"), "reg_cmd", f"{side}:div2",
              units=[u("b3")], side_name=s, config=cf.get("div2-b3")),
-        _pos(side, "div2-b4", T("div2-b4", f"{s}第4团团长"), "reg_cmd", f"{side}:div2",
+        _pos(side, "div2-b4", t_title("div2-b4", f"{s}第4团团长"), "reg_cmd", f"{side}:div2",
              units=[u("b4")], side_name=s, config=cf.get("div2-b4")),
         # 前线侦察哨：虚拟职位，引擎的敌情速报以此名义流入情报参谋
-        _pos(side, "front", T("front", "前线侦察哨"), "front", f"{side}:army",
+        _pos(side, "front", t_title("front", "前线侦察哨"), "front", f"{side}:army",
              virtual=True, side_name=s, config=cf.get("front")),
     ]
     return positions

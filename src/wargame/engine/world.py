@@ -1,4 +1,4 @@
-"""世界引擎：让组织层的命令产生真实后果。
+﻿"""世界引擎：让组织层的命令产生真实后果。
 
 只负责机动、交战、补给、侦察、天气/空军遮断、补给站争夺、战役目标。
 所有随机性来自注入的 rng——固定种子整场可复现。引擎是双方共享的
@@ -32,8 +32,8 @@ UNIT_GLYPH = {"infantry": "步", "armor": "装", "artillery": "炮", "recon": "�
 UNIT_NAME = {"infantry": "步兵", "armor": "装甲", "artillery": "炮兵", "recon": "侦察"}
 
 # 天气对空军遮断的放大系数（storm 基本瘫痪空中力量——1944 年 6 月 6 日）
-WEATHER_AIR = {"clear": 1.0, "overcast": 0.5, "rain": 0.3, "storm": 0.1}
-WEATHER_CN = {"clear": "晴", "overcast": "阴", "rain": "雨", "storm": "风暴"}
+WEATHER_AIR = {"clear": 1.0, "overcast": 0.5, "rain": 0.3, "storm": 0.1, "snowstorm": 0.05}
+WEATHER_CN = {"clear": "晴", "overcast": "阴", "rain": "雨", "storm": "暴风雪", "snowstorm": "暴风雪"}
 
 # 可调参数默认值（Web 设置面板实时可改；dict 以引用共享给 sim/host）
 DEFAULT_TUNING: dict = {
@@ -240,7 +240,7 @@ def _d(a: tuple[int, int], b: tuple[int, int]) -> int:
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
-def _arty_range(world: "World", unit: Unit) -> int:
+def _arty_range(world: World, unit: Unit) -> int:
     """炮兵有效射程：基础射程 × 射程倍率（设置面板可调）× 昼夜/天气修正。"""
     r = unit.rng * float(world.tuning.get("arty_range_scale", 1.0))
     if world.period == "night":
@@ -490,7 +490,6 @@ class World:
             elif self.weather == "storm":
                 speed *= 0.6
             unit.mp += max(0.1, speed)
-            moved_any = False
             while unit.order and unit.path:
                 nx, ny = unit.path[0]
                 occ = self.unit_at(nx, ny)
@@ -513,7 +512,6 @@ class World:
                 unit.x, unit.y = nx, ny
                 unit.path.pop(0)
                 unit.moved_this_tick = True
-                moved_any = True
             if unit.order and [unit.x, unit.y] == unit.order["target"]:
                 unit.order, unit.path = None, []
                 events.append({"type": "reached", "unit": unit.id,
@@ -555,7 +553,15 @@ class World:
             return
         # 天气效果在_dmg/_movement/sightings中读取self.weather应用
         # 这里处理持续天气的累积效果（如泥泞）
-        pass
+        rain_penalty = float(self.tuning.get("rain_move_penalty", 0.2))
+        storm_pen = float(self.tuning.get("storm_arty_penalty", 0.3))
+        for u in self.units.values():
+            if not u.alive:
+                continue
+            if self.weather == "rain":
+                u.fatigue = min(100.0, u.fatigue + rain_penalty * 0.05)
+            if self.weather == "storm":
+                u.morale = max(0.0, u.morale - storm_pen * 0.1)
 
     def _update_command_control(self, events: list[dict]) -> None:
         """3.指挥范围与控制：单位离指挥官过远则降效，指挥官阵亡影响士气。"""
@@ -596,9 +602,12 @@ class World:
                 if e.side != u.side or e.id == u.id:
                     continue
                 if _d((u.x, u.y), (e.x, e.y)) <= 1:
-                    if e.kind == "artillery": u.nearby_arty = True
-                    elif e.kind == "infantry": u.nearby_inf = True
-                    elif e.kind == "armor": u.nearby_armor = True
+                    if e.kind == "artillery":
+                        u.nearby_arty = True
+                    elif e.kind == "infantry":
+                        u.nearby_inf = True
+                    elif e.kind == "armor":
+                        u.nearby_armor = True
 
     def _update_supply_lines(self, events: list[dict]) -> None:
         """1.后勤补给线：计算从补给站到单位的路径，检测是否被敌军切断。"""
@@ -719,11 +728,11 @@ class World:
             return
         morale_drop = float(self.tuning.get("command_break_morale", 15))
         for u in self.units.values():
-            if u.alive and u.side == unit.side and u.id != unit.id:
-                if _d((u.x, u.y), (unit.x, unit.y)) <= int(self.tuning.get("command_radius", 6)):
-                    u.morale = max(0.0, u.morale - morale_drop)
-                    events.append({"type": "leader_lost", "unit": u.id, "name": u.name,
-                                   "side": u.side, "commander": unit.name})
+            if (u.alive and u.side == unit.side and u.id != unit.id
+                    and _d((u.x, u.y), (unit.x, unit.y)) <= int(self.tuning.get("command_radius", 6))):
+                u.morale = max(0.0, u.morale - morale_drop)
+                events.append({"type": "leader_lost", "unit": u.id, "name": u.name,
+                               "side": u.side, "commander": unit.name})
 
     def _morale(self, events: list[dict]) -> None:
         """士气状态机：损失→士气下降→崩溃溃退→脱离接触后重组。
@@ -733,7 +742,6 @@ class World:
         """
         if not float(self.tuning.get("morale_enabled", 1)):
             return
-        shock = float(self.tuning.get("morale_shock", 0.35))
         break_thr = float(self.tuning.get("morale_break", 0.25))
         recover = float(self.tuning.get("morale_recover", 0.06))
         reorg_str = float(self.tuning.get("reorg_strength", 0.45))
@@ -850,9 +858,9 @@ class World:
             elif attacker.exp_level == "elite":
                 base *= 1.0 + float(self.tuning.get("exp_elite_bonus", 0.3))
         # 8.指挥官特质：攻击型指挥官加成
-        if float(self.tuning.get("leader_enabled", 1)) and attacker.is_commander:
-            if attacker.leader_style == "aggressive":
-                base *= 1.0 + float(self.tuning.get("leader_attack_bonus", 0.1))
+        if (float(self.tuning.get("leader_enabled", 1)) and attacker.is_commander
+                and attacker.leader_style == "aggressive"):
+            base *= 1.0 + float(self.tuning.get("leader_attack_bonus", 0.1))
         # 9.队形：行军队形中遇敌战力折扣
         if float(self.tuning.get("deployment_enabled", 1)) and attacker.formation == "march":
             base *= 1.0 - float(self.tuning.get("march_combat_penalty", 0.4))
@@ -878,9 +886,9 @@ class World:
             if float(self.tuning.get("engineering_enabled", 1)):
                 guard += defender.entrench_level * float(self.tuning.get("entrench_level_bonus", 0.2))
         # 8.指挥官特质：防御型指挥官加成
-        if float(self.tuning.get("leader_enabled", 1)) and defender.is_commander:
-            if defender.leader_style == "cautious":
-                guard *= 1.0 + float(self.tuning.get("leader_defense_bonus", 0.1))
+        if (float(self.tuning.get("leader_enabled", 1)) and defender.is_commander
+                and defender.leader_style == "cautious"):
+            guard *= 1.0 + float(self.tuning.get("leader_defense_bonus", 0.1))
         # 7.经验：防御方经验加成
         if float(self.tuning.get("experience_enabled", 1)) and defender.exp_level in ("veteran", "elite"):
             guard *= 1.0 + float(self.tuning.get("exp_veteran_bonus", 0.15)) * 0.5

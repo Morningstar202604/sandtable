@@ -24,6 +24,8 @@ jobs:
           pip install -e ".[dev]"
       - name: 运行测试
         run: python -m pytest -q
+      - name: 代码风格检查
+        run: python -m ruff check src tests
       - name: 密钥泄漏扫描
         run: |
           ! git grep -inE "sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}" -- . ':!*.md' ':!.env*'
