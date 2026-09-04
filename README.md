@@ -76,6 +76,15 @@ Intent (HQ) → Plan (staff) → Orders (army→division→regiment) → Actions
   interface with NATO-style unit symbols, procedural terrain textures, combat
   effects (explosions, artillery trajectories, fire lines), unit selection &
   detail panels, hover tooltips, force-ratio bars, and day/night progress.
+- **Campaign briefing & after-action review** — every scenario ships an
+  operational briefing shown before play, and the engine emits a command
+  summary (weather / objective control / force ratios) every 5 ticks. After
+  the battle, export a Markdown after-action report — command-chain health,
+  objective-control timeline, key events — or watch live strength / score /
+  objective curves in the review panel.
+- **Stalingrad scenario** — urban attrition with the Volga and the railway
+  station as the prizes: a snowstorm → overcast → clear weather script, street
+  fighting, and scripted reinforcements for both sides.
 
 ## Quick start
 
