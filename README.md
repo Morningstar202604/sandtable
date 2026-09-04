@@ -29,8 +29,19 @@
   <code>organizational-friction</code> · <code>stalingrad</code> · <code>normandy</code> · <code>fastapi</code>
 </p>
 
+## Screenshot
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="WARGENERALS command console — live tactical map, command chain and message feed" width="860">
+</p>
+
+The command console is a single dark COP-style page — the live tactical map in
+the center, the command chain on the left, and the message feed / after-action
+review panel on the right.
+
 ## Table of contents
 
+- [Screenshot](#screenshot)
 - [Why WARGENERALS](#why-wargenerals)
 - [Highlights](#highlights)
 - [Quick start](#quick-start)
