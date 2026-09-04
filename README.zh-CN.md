@@ -25,8 +25,17 @@
   <code>组织摩擦</code> · <code>斯大林格勒</code> · <code>诺曼底</code> · <code>fastapi</code>
 </p>
 
+## 界面预览
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="将台指挥台——实时态势图、指挥链与战况电文" width="860">
+</p>
+
+指挥台是单页深色 COP 界面——中央实时态势图，左侧指挥链，右侧战况电文与讲评面板。
+
 ## 目录
 
+- [界面预览](#界面预览)
 - [为什么做将台](#为什么做将台wargenerals)
 - [核心特性](#核心特性)
 - [快速开始](#快速开始)
