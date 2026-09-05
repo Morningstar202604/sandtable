@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.7] - 2026-09-05
 
 ### Added — 战役简报与推演复盘体系
 - **战役简报系统** — 选择场景后先呈现战役背景简报再进入推演；推演中每 5 拍产出指挥摘要（天气/目标控制/兵力对比）
