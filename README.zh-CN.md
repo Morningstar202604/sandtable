@@ -301,4 +301,4 @@ python -m ruff check src tests  # 零告警
 
 ## 许可
 
-[MIT](LICENSE) © 2026 Wargenerals Contributors
+[MIT](LICENSE) © 2026 Morningstar202604

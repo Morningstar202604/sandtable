@@ -354,4 +354,4 @@ scan will fail the build). See [CONTRIBUTING.md](CONTRIBUTING.md) and
 
 ## License
 
-[MIT](LICENSE) © 2026 Wargenerals Contributors
+[MIT](LICENSE) © 2026 Morningstar202604

@@ -319,4 +319,4 @@ API キー・トークンは**絶対にコミットしない**（CI の秘密漏
 
 ## ライセンス
 
-[MIT](LICENSE) © 2026 Wargenerals Contributors
+[MIT](LICENSE) © 2026 Morningstar202604
